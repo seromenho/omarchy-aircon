@@ -1,0 +1,77 @@
+# AGENTS.md
+
+Guidance for AI coding agents (and humans) working on **aircon**: local, cloud-free control
+of air conditioners on [Omarchy](https://omarchy.org/). Read this before changing anything.
+
+> **Adding support for a new brand or protocol?** Use the ready-made prompt in
+> [`docs/prompts/add-a-backend.md`](docs/prompts/add-a-backend.md). It explains what to build,
+> where it goes and how to test it.
+>
+> **Technical reference** (CLI, configuration file, socket API, internals, Haier protocol
+> notes): [`docs/reference.md`](docs/reference.md). The README is the user-facing landing
+> page; keep it short and non-technical and put details in the reference.
+
+## What is in the repository
+
+```
+src/aircon/
+  model.py            brand-independent State, Capabilities and Command
+  config.py           ~/.config/aircon/config.toml: [[device]] list, ids, options
+  backends/
+    base.py           the Backend protocol every brand implements
+    __init__.py       BACKENDS registry: name -> factory
+    haier_smartair2/  reference backend (protocol.py = pure codec, backend.py = asyncio client)
+  daemon.py           aircond: one backend + scheduler per device, unix socket (JSON lines)
+  scheduler.py        timers, sleep curve, filter hours (backend-independent)
+  store.py            per-device persisted state
+  cli.py              the `aircon` command
+  setup.py            discovery, feature validation, config editing
+  setup_cli.py        `aircon setup`
+  menu.py             managed block in the Omarchy menu file
+plugin/aircon/        Omarchy shell (Quickshell/QML) bar widget, panel and in-panel setup
+tests/                pytest suite; tests/fake_dongle.py fakes the Haier module
+tools/haier_probe.py  on-device validation for Haier units (changes the unit, then restores it)
+docs/reference.md     technical reference (CLI, config, socket API, internals)
+docs/prompts/         prompts for coding agents (adding a backend)
+```
+
+Data flow: plugin / menu / CLI → `aircon` → unix socket → `aircond` → `Backend` → device.
+The socket protocol and snapshot shape are documented in docs/reference.md ("Socket API").
+
+## Commands
+
+```bash
+uv sync                              # dev environment
+uv run pytest                        # full test suite (fast, no network, no real device)
+uv run ruff check src tests tools    # lint
+omarchy plugin validate plugin/aircon
+./install.sh                         # install on this machine (commands, service, plugin, menu)
+```
+
+## Rules
+
+- **English only** in the repository: code, comments, docs, commit messages and UI strings,
+  whatever language you chat in.
+- **No personal data**: no real IP addresses, MAC addresses, names, tokens or keys in code,
+  tests or docs. Use placeholders such as `192.168.1.50` and `04FA83A1B2C3`.
+- **Runtime dependencies: stdlib only.** A backend that truly needs a third-party library must
+  make it optional (import inside the backend) and say so in the README.
+- **Tests never touch the user's files or devices.** `tests/conftest.py` points
+  `AIRCON_CONFIG`, `AIRCON_MENU_FILE` and `AIRCON_SOCKET` at temporary paths; keep it that way.
+  Use fakes for devices.
+- **Hardware is touched only by explicit, owner-approved tools** (like
+  `tools/haier_probe.py`), and every change to a real unit is restored afterwards.
+- **Brand-specific code stays inside its backend.** The model, daemon, CLI, menu and plugin
+  must keep working for every backend; they learn what a device supports from `Capabilities`.
+- **Plugin**: no hard-coded colors (use `Color.*`, `bar.*` or `AcPalette`), strings in
+  English, no symlinks in the plugin folder.
+- Keep the repo green: `uv run pytest` and `uv run ruff check` before every commit.
+
+## Plugin gotchas
+
+- Never name a QML id `palette`: every Item already has a `palette` property.
+- Inside `PanelHero.trailingControl` the name `root` does not reach the panel; go through an
+  id defined in `Panel.qml` (see the `actions` object).
+- The shell caches QML components. After changing plugin files run `./install.sh` and then
+  `omarchy restart shell`; `rescanPlugins` alone may keep the old code.
+- Shell logs: `/run/user/$UID/quickshell/by-id/<instance>/log.log`.

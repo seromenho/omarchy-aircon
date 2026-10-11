@@ -1,0 +1,19 @@
+# `aircon setup` writes this file for you. To write it by hand, copy it to
+# ~/.config/aircon/config.toml and adjust.
+
+[[device]]
+id = "living-room"
+name = "Living room"
+backend = "haier_smartair2"
+host = "192.168.1.50"
+mac = "04FA83AABBCC"  # printed on the Wi-Fi module
+port = 56800
+# How the unit encodes swing: "bits" (ESPHome normal mode) or "byte" (alternative mode).
+swing_style = "bits"
+# Optional features confirmed on the device: "health", "sleep", "swing_horizontal".
+# `aircon setup` fills this in when you let it test the unit.
+features = []
+
+[filter]
+# Remind to clean the filter after this many hours of operation.
+threshold_hours = 300
