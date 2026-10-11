@@ -43,10 +43,14 @@ aircon is built around pluggable backends, so another brand or protocol (Midea, 
 Tuya-based units, an ESPHome board, …) is one module away. The panel, the timer, the menu and
 everything else work with any backend.
 
-The easiest way: open a coding agent (Claude Code, Codex, …) in this repository and paste the
-prompt from [docs/prompts/add-a-backend.md](docs/prompts/add-a-backend.md), filling in what
-you know about your unit. It explains what to build, where, and how to test it without
-touching your air conditioner.
+Open a coding agent (Claude Code, Codex, Cursor, …) in this repository and ask:
+
+> Add support for my Midea air conditioner
+
+It already knows the way: it asks you a few questions, looks for how your unit can be
+controlled locally, builds and tests the backend without touching your air conditioner, and
+only tries it on the real unit when you say so. (If your agent doesn't read `AGENTS.md` on its
+own, point it to [docs/adding-a-backend.md](docs/adding-a-backend.md).)
 
 Got it working? A pull request is very welcome.
 

@@ -3,10 +3,15 @@
 Guidance for AI coding agents (and humans) working on **aircon**: local, cloud-free control
 of air conditioners on [Omarchy](https://omarchy.org/). Read this before changing anything.
 
-> **Adding support for a new brand or protocol?** Use the ready-made prompt in
-> [`docs/prompts/add-a-backend.md`](docs/prompts/add-a-backend.md). It explains what to build,
-> where it goes and how to test it.
->
+## Adding support for a new air conditioner
+
+When the user asks to add support for their air conditioner, a new brand, a new protocol or
+a new backend (e.g. "add support for my Midea air conditioner"), follow
+[`docs/adding-a-backend.md`](docs/adding-a-backend.md) step by step: ask what you need, research,
+build the backend with offline tests, and only touch their real unit with permission.
+
+---
+
 > **Technical reference** (CLI, configuration file, socket API, internals, Haier protocol
 > notes): [`docs/reference.md`](docs/reference.md). The README is the user-facing landing
 > page; keep it short and non-technical and put details in the reference.
@@ -32,7 +37,7 @@ plugin/aircon/        Omarchy shell (Quickshell/QML) bar widget, panel and in-pa
 tests/                pytest suite; tests/fake_dongle.py fakes the Haier module
 tools/haier_probe.py  on-device validation for Haier units (changes the unit, then restores it)
 docs/reference.md     technical reference (CLI, config, socket API, internals)
-docs/prompts/         prompts for coding agents (adding a backend)
+docs/adding-a-backend.md  how an agent adds support for a new air conditioner
 ```
 
 Data flow: plugin / menu / CLI → `aircon` → unix socket → `aircond` → `Backend` → device.
