@@ -33,7 +33,9 @@ src/aircon/
   setup.py            discovery, feature validation, config editing
   setup_cli.py        `aircon setup`
   menu.py             managed block in the Omarchy menu file
-plugin/aircon/        Omarchy shell (Quickshell/QML) bar widget, panel and in-panel setup
+manifest.json         Omarchy plugin manifest (the repo itself is the plugin)
+plugin/               Omarchy shell (Quickshell/QML) bar widget, panel and in-panel setup
+install.sh            install / --update / --uninstall (wrappers, systemd unit, menu)
 tests/                pytest suite; tests/fake_dongle.py fakes the Haier module
 tools/haier_probe.py  on-device validation for Haier units (changes the unit, then restores it)
 docs/reference.md     technical reference (CLI, config, socket API, internals)
@@ -49,8 +51,8 @@ The socket protocol and snapshot shape are documented in docs/reference.md ("Soc
 uv sync                              # dev environment
 uv run pytest                        # full test suite (fast, no network, no real device)
 uv run ruff check src tests tools    # lint
-omarchy plugin validate plugin/aircon
-./install.sh                         # install on this machine (commands, service, plugin, menu)
+omarchy plugin validate ~/.config/omarchy/plugins/aircon   # the installed copy (a dev .venv has symlinks)
+./install.sh                         # install from this clone (copies into the plugin folder)
 ```
 
 ## Rules
@@ -70,6 +72,10 @@ omarchy plugin validate plugin/aircon
   must keep working for every backend; they learn what a device supports from `Capabilities`.
 - **Plugin**: no hard-coded colors (use `Color.*`, `bar.*` or `AcPalette`), strings in
   English, no symlinks in the plugin folder.
+- **Releases:** bump the version in `manifest.json`, `pyproject.toml`,
+  `src/aircon/__init__.py` and `plugin/Service.qml` together (a test checks they match). After
+  `omarchy plugin update`, the widget compares it with the version the daemon reports and runs
+  `install.sh --update` when they differ.
 - Keep the repo green: `uv run pytest` and `uv run ruff check` before every commit.
 
 ## Plugin gotchas

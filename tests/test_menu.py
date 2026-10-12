@@ -89,3 +89,16 @@ def test_sync_creates_missing_file(tmp_path):
     path = tmp_path / "ext" / "omarchy-menu.jsonc"
     menu.sync(path, None)
     assert '"aircon.setup"' in path.read_text()
+
+
+def test_remove_drops_only_our_block(tmp_path):
+    path = tmp_path / "omarchy-menu.jsonc"
+    path.write_text(USER_FILE)
+    menu.sync(path, Config(devices=[device("Living room")]))
+    assert menu.remove(path) is True
+    text = path.read_text()
+    assert menu.BEGIN not in text
+    assert '"personal.notes"' in text
+    assert text.rstrip().endswith("}")
+    assert menu.remove(path) is False
+    assert menu.remove(tmp_path / "missing.jsonc") is False

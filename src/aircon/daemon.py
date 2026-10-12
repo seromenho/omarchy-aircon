@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from aircon import __version__
 from aircon.backends import create_backend
 from aircon.backends.base import Backend
 from aircon.config import (
@@ -136,6 +137,7 @@ class Daemon:
         updated_at = self._clock().isoformat(timespec="seconds")
         if not self.devices or self.config is None:
             return {
+                "version": __version__,
                 "configured": False,
                 "default": None,
                 "devices": [],
@@ -143,6 +145,7 @@ class Daemon:
                 "updated_at": updated_at,
             }
         return {
+            "version": __version__,
             "configured": True,
             "default": self.config.default_id,
             "devices": [self.device_snapshot(rt) for rt in self.devices.values()],

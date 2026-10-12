@@ -115,3 +115,21 @@ def sync(path: Path, config: Config | None) -> bool:
     tmp.write_text(updated)
     os.replace(tmp, path)
     return True
+
+
+def remove(path: Path) -> bool:
+    """Drop the aircon block (and the legacy one); returns True if the file changed."""
+    if not path.exists():
+        return False
+    original = path.read_text()
+    stripped = _strip_ours(original)
+    end = stripped.rstrip().rfind("}")
+    if end < 0:
+        raise ValueError(f"{path}: no closing brace found")
+    updated = stripped[:end].rstrip() + "\n}\n"
+    if updated == original:
+        return False
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(updated)
+    os.replace(tmp, path)
+    return True

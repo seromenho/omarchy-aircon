@@ -6,6 +6,7 @@ import pytest
 from conftest import MAC
 from fake_dongle import FakeDongle
 
+import aircon
 from aircon.backends.haier_smartair2.backend import HaierSmartAir2Backend
 from aircon.config import Config, DeviceConfig
 from aircon.daemon import Daemon
@@ -91,6 +92,7 @@ async def test_get_returns_snapshot(env):
     assert reply["ok"] is True
     assert reply["state"]["configured"] is True
     assert reply["state"]["default"] == "living-room"
+    assert reply["state"]["version"] == aircon.__version__
     state = dev(reply)
     assert state["connected"] is True
     assert state["name"] == "Living room"

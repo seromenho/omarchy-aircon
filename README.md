@@ -26,13 +26,16 @@ Yours isn't listed? See [Add your air conditioner](#add-your-air-conditioner).
 ## Install
 
 ```bash
-git clone https://github.com/seromenho/omarchy-aircon.git
-cd omarchy-aircon
-./install.sh
+omarchy plugin add https://github.com/seromenho/omarchy-aircon --enable
 ```
 
-Then click the new icon in the bar. The panel looks for air conditioners on your network;
-pick yours, give it a name, and you're done. Use **+ Add** for more rooms.
+Then click the new icon in the bar:
+
+1. **Finish install**: sets up the small background service (a few seconds, no password).
+2. **Find your air conditioner**: the panel looks for it on your network; pick yours and give
+   it a name. Use **+ Add** for more rooms.
+
+To update later: `omarchy plugin update aircon`. The widget picks up the new version by itself.
 
 > **Haier:** pair the unit's Wi-Fi module once with the HaierSmartAir2 app first. After that,
 > neither the app nor the internet is needed.

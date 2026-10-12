@@ -215,7 +215,7 @@ def _build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--no-restart", action="store_true", help=argparse.SUPPRESS)
 
     menu_parser = sub.add_parser("menu", help="Omarchy menu entries")
-    menu_parser.add_argument("action", choices=["sync"])
+    menu_parser.add_argument("action", choices=["sync", "remove"])
 
     setup_cli.add_parser(sub)
     return parser
@@ -261,8 +261,12 @@ def _run(args: argparse.Namespace) -> int:
     if command == "devices":
         return _devices(args)
     if command == "menu":
-        menu.sync(menu.default_menu_path(), setup.load_or_empty(default_config_path()))
-        print(f"Updated {menu.default_menu_path()}")
+        path = menu.default_menu_path()
+        if args.action == "remove":
+            menu.remove(path)
+        else:
+            menu.sync(path, setup.load_or_empty(default_config_path()))
+        print(f"Updated {path}")
         return 0
     if command == "watch":
         return watch()

@@ -13,6 +13,23 @@ Item {
     return home ? home + "/.local/bin/aircon" : "aircon"
   }
 
+  // Keep in sync with manifest.json and src/aircon/__init__.py (a test checks this).
+  readonly property string pluginVersion: "0.2.0"
+  readonly property string installScript:
+    Qt.resolvedUrl("../install.sh").toString().replace(/^file:\/\//, "")
+
+  // False until the commands and the user service exist (right after `omarchy plugin add`).
+  property bool installed: true
+  // The daemon still runs older code after `omarchy plugin update`: refresh it once.
+  readonly property bool outdated: serviceUp && snapshot.version !== pluginVersion
+  property bool _updateTried: false
+  onOutdatedChanged: {
+    if (!outdated || _updateTried) return
+    _updateTried = true
+    updateProcess.command = [installScript, "--update"]
+    updateProcess.running = true
+  }
+
   property bool serviceUp: false
   property var snapshot: ({})
   property string selectedId: ""
@@ -134,7 +151,30 @@ Item {
     id: restartTimer
     interval: 1500
     repeat: false
-    onTriggered: watchProcess.running = true
+    onTriggered: {
+      installCheck.running = true
+      watchProcess.running = true
+    }
+  }
+
+  Process {
+    id: installCheck
+    running: true
+    command: ["sh", "-c",
+              "test -x \"$HOME/.local/bin/aircon\" && systemctl --user is-enabled --quiet aircond.service"]
+    onExited: function(exitCode) { root.installed = exitCode === 0 }
+  }
+
+  Process {
+    id: updateProcess
+    running: false
+    command: []
+    stderr: StdioCollector { id: updateStderr; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.commandError = "Update failed: " + String(updateStderr.text || "").trim().split("\n").pop()
+      }
+    }
   }
 
   // -- in-panel setup ---------------------------------------------------------------------

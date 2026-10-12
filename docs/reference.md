@@ -3,7 +3,7 @@
 Everything technical about omarchy-aircon. For a quick start, see the [README](../README.md).
 
 - [Components](#components)
-- [What the installer does](#what-the-installer-does)
+- [Install, update and uninstall](#install-update-and-uninstall)
 - [Setup from the command line](#setup-from-the-command-line)
 - [Command line](#command-line)
 - [Several air conditioners](#several-air-conditioners)
@@ -19,24 +19,51 @@ Everything technical about omarchy-aircon. For a quick start, see the [README](.
 - `aircond`: a small daemon (systemd user service) that keeps one connection per air
   conditioner and publishes their state over a unix socket.
 - `aircon`: the command-line client.
-- `plugin/aircon/`: the Omarchy shell (Quickshell) plugin: bar indicator, control panel and
-  in-panel setup.
+- the Omarchy shell (Quickshell) plugin: `manifest.json` at the repository root and the QML in
+  `plugin/` (bar indicator, control panel, in-panel setup).
 - Omarchy menu entries for quick actions.
 
-Requirements: Omarchy 4 (Quickshell shell), `uv`, Python 3.12+. No runtime Python
-dependencies beyond the standard library.
+Requirements: Omarchy 4 (Quickshell shell) and the system `python3` (3.12 or newer). There are
+no Python dependencies beyond the standard library, and nothing is installed system-wide.
 
-## What the installer does
+## Install, update and uninstall
 
-`./install.sh` (safe to re-run after pulling changes):
+The repository is an Omarchy plugin, so the usual way is:
 
-1. installs `aircon` and `aircond` into `~/.local/bin` with `uv tool install`;
-2. installs and starts the `aircond` systemd user service;
-3. copies the plugin to `~/.config/omarchy/plugins/aircon/` and enables it on the right side
-   of the bar (replacing a plugin installed under an older `<user>.aircon` id);
+```bash
+omarchy plugin add https://github.com/seromenho/omarchy-aircon --enable
+```
+
+`omarchy plugin add` clones the repository into `~/.config/omarchy/plugins/aircon/` and enables
+the bar widget, but it does not run install scripts. Until the rest is installed the widget
+shows a download icon, and its panel offers **Finish install**, which runs the plugin's own
+`install.sh` in a floating terminal. That script:
+
+1. writes two small wrappers, `~/.local/bin/aircon` and `~/.local/bin/aircond`, that run the
+   code from the plugin folder with `python3`;
+2. installs, enables and (re)starts the `aircond` systemd user service;
+3. makes sure the widget is enabled on the right side of the bar;
 4. writes the "Air Conditioner" entries into a marked block of
-   `~/.config/omarchy/extensions/omarchy-menu.jsonc` (`aircon menu sync`; the original file
-   is kept as `omarchy-menu.jsonc.aircon.bak`).
+   `~/.config/omarchy/extensions/omarchy-menu.jsonc` (`aircon menu sync`; the original file is
+   kept as `omarchy-menu.jsonc.aircon.bak`).
+
+It is safe to re-run. It also replaces installs from versions before 0.2 (installed with
+`uv tool`, or as a `<user>.aircon` plugin).
+
+**Without `omarchy plugin add`:** clone the repository anywhere and run `./install.sh`; it
+copies the code into the plugin folder first and then does the same steps.
+
+**Updating:** `omarchy plugin update aircon` pulls the new code. The widget notices that the
+running service reports an older version and runs `install.sh --update` once by itself.
+
+**Uninstalling:**
+
+```bash
+~/.config/omarchy/plugins/aircon/install.sh --uninstall   # service, commands, menu entries
+omarchy plugin remove aircon                              # the widget and the code
+```
+
+Your configuration in `~/.config/aircon/` and state in `~/.local/state/aircon/` are kept.
 
 Setup itself happens in the bar panel (or with `aircon setup`, below).
 
@@ -205,7 +232,7 @@ uv run python tools/haier_probe.py --host <ip> --mac <mac> validate   # changes 
 uv sync
 uv run pytest
 uv run ruff check src tests tools
-omarchy plugin validate plugin/aircon
+omarchy plugin validate ~/.config/omarchy/plugins/aircon   # the installed copy (a dev .venv has symlinks)
 ```
 
 Tests use an in-process fake of the Haier module (`tests/fake_dongle.py`) and never touch the

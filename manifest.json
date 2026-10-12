@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "aircon",
   "name": "Air Conditioner",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "aircon contributors",
   "license": "MIT",
   "description": "Local air conditioner control backed by the aircond daemon: bar indicator and a themed control panel.",
@@ -10,7 +10,7 @@
     "bar-widget"
   ],
   "entryPoints": {
-    "barWidget": "Panel.qml"
+    "barWidget": "plugin/Panel.qml"
   },
   "barWidget": {
     "displayName": "Air Conditioner",

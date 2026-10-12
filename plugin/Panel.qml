@@ -31,7 +31,10 @@ Panel {
     return parts.length ? "Room " + parts.join(" · ") : "Room —"
   }
 
+  readonly property bool needsInstall: !ac.installed
+
   readonly property string statusText: {
+    if (needsInstall) return ""
     if (!ac.serviceUp) return "Service stopped — run: systemctl --user start aircond"
     if (!ac.configured) return "Not configured"
     if (!ac.connected) return ac.lastError || "Air conditioner unreachable"
@@ -66,6 +69,11 @@ Panel {
     if (keys.length === 0) return "Timer"
     if (keys.length > 1) return keys.length + " timers"
     return (keys[0] === "on" ? "On at " : "Off at ") + clock(ac.timers[keys[0]])
+  }
+
+  function finishInstall() {
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", ac.installScript])
+    root.close()
   }
 
   function launchSetup() {
@@ -104,14 +112,17 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: ac.serviceUp && !ac.configured ? "\uf013"
+    text: root.needsInstall ? "\uf019"
+          : ac.serviceUp && !ac.configured ? "\uf013"
           : !ac.connected ? "\uf071"
           : (ac.power ? root.glyph + " " + ac.targetTemp + "°" : root.glyph + " off") + root.badge
-    foreground: ac.serviceUp && !ac.configured ? Qt.darker(root.barForeground, 1.55)
+    foreground: root.needsInstall || (ac.serviceUp && !ac.configured)
+                ? Qt.alpha(root.barForeground, 0.7)
               : !ac.connected ? root.urgent
                               : (ac.power ? root.modeColor : Qt.alpha(root.barForeground, 0.7))
     slotSize: Style.bar.iconSlot * ((ac.connected ? 2.4 : 1) + (root.badge !== "" ? 1 : 0))
-    tooltipText: ac.serviceUp && !ac.configured ? "Air conditioner: not configured — click to set up"
+    tooltipText: root.needsInstall ? "Air conditioner: click to finish installing"
+               : ac.serviceUp && !ac.configured ? "Air conditioner: not configured — click to set up"
                : ac.connected
       ? (ac.power ? ac.deviceName + ": " + root.modeLabels[ac.mode] + " " + ac.targetTemp + "°C"
                   : ac.deviceName + ": off")
@@ -672,6 +683,36 @@ Panel {
             }
           }
 
+          // -- finish install (right after `omarchy plugin add`) --------------------
+          Column {
+            width: parent.width
+            spacing: Style.space(12)
+            visible: root.needsInstall
+
+            PanelSectionHeader {
+              text: "FINISH INSTALLING"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "aircon needs a small background service to talk to your air conditioner. "
+                    + "Installing it takes a few seconds and needs no password."
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Button {
+              text: "Finish install"
+              iconText: "\uf019"
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.finishInstall()
+            }
+          }
+
           // -- setup (first run and "Add") -----------------------------------------
           SetupView {
             width: parent.width
@@ -687,7 +728,8 @@ Panel {
 
           // -- footer -------------------------------------------------------------
           Text {
-            visible: ac.commandError !== "" || !ac.serviceUp || (ac.configured && !ac.connected)
+            visible: ac.commandError !== "" || (ac.installed && !ac.serviceUp)
+                     || (ac.configured && !ac.connected)
             width: parent.width
             text: ac.commandError !== "" ? ac.commandError : root.statusText
             color: ac.commandError !== "" || (ac.configured && !ac.connected) ? root.urgent : root.dim
