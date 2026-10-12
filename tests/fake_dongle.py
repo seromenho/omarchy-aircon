@@ -13,8 +13,10 @@ COPIED_OFFSETS = (p.OFF_MODE, p.OFF_FAN, p.OFF_SWING, p.OFF_POWER, p.OFF_FLAGS, 
 
 
 class FakeDongle:
-    def __init__(self, mac: str = MAC, frame: bytes = REAL_STATUS_FRAME) -> None:
+    def __init__(self, mac: str = MAC, frame: bytes = REAL_STATUS_FRAME,
+                 greet: bool = True) -> None:
         self.mac = mac
+        self.greet = greet
         self.frame = bytearray(frame)
         self.requests: list[bytes] = []
         self.connections = 0
@@ -66,7 +68,8 @@ class FakeDongle:
         self.connections += 1
         self._writers.add(writer)
         # The real module pushes an info frame and a status frame right after connecting.
-        writer.write(self._response(0, INFO_FRAME) + self._response(0, self._status()))
+        if self.greet:
+            writer.write(self._response(0, INFO_FRAME) + self._response(0, self._status()))
         buf = b""
         try:
             while True:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field, replace
 
 MODES = ("auto", "cool", "heat", "fan", "dry")
@@ -103,6 +104,8 @@ def _clamp_temperature(value: object, caps: Capabilities) -> int:
         number = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         raise ValueError("target_temp must be a number") from None
+    if not math.isfinite(number):
+        raise ValueError("target_temp must be a number")
     step = max(1, caps.temp_step)
     rounded = int(round(number / step) * step)
     return max(caps.temp_min, min(caps.temp_max, rounded))

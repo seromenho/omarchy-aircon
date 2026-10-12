@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 
@@ -11,7 +12,12 @@ from aircon.store import Store
 Clock = Callable[[], datetime]
 Apply = Callable[[Command], Awaitable[object]]
 
+log = logging.getLogger(__name__)
+
+DEVICE_ERRORS = (TimeoutError, ConnectionError)
 TIMER_ACTIONS = ("on", "off")
+# How long a due timer keeps retrying while the unit does not answer.
+TIMER_GRACE = timedelta(minutes=15)
 # (minutes since start, temperature offset); cooling moves up, heating moves down.
 SLEEP_CURVE_STEPS = ((0, 0), (60, 1), (120, 2))
 MAX_SLEEP_HOURS = 12
@@ -19,6 +25,19 @@ MAX_SLEEP_HOURS = 12
 
 def local_now() -> datetime:
     return datetime.now().astimezone()
+
+
+def _valid_curve(curve: object) -> bool:
+    """Ignore a hand-edited or old-format curve instead of crashing on it later."""
+    if not isinstance(curve, dict):
+        return False
+    try:
+        datetime.fromisoformat(curve["started"])
+        return (isinstance(curve["base_temp"], int) and curve["direction"] in (-1, 0, 1)
+                and isinstance(curve["hours"], int) and isinstance(curve["off_at_end"], bool)
+                and curve["step"] in range(len(SLEEP_CURVE_STEPS)))
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 class Scheduler:
@@ -43,7 +62,7 @@ class Scheduler:
                 except (TypeError, ValueError):
                     pass
         curve = data.get("sleep_curve")
-        self._curve: dict | None = curve if isinstance(curve, dict) else None
+        self._curve: dict | None = curve if _valid_curve(curve) else None
         self._filter_hours = float(data.get("filter_hours") or 0.0)
         self._last_filter_tick: datetime | None = None
 
@@ -125,30 +144,49 @@ class Scheduler:
 
     # -- clock tick -----------------------------------------------------------------
 
-    async def tick(self) -> None:
+    async def tick(self, power: bool = True) -> None:
+        """Run what is due. `power` is the unit's current state: a unit switched off by a
+        timer, the remote or an app ends the sleep curve instead of being turned back on."""
         now = self._clock()
         for action, when in list(self._timers.items()):
-            if when <= now:
-                self._timers.pop(action)
-                self._persist()
+            if when > now:
+                continue
+            try:
                 await self._apply(Command(power=action == "on"))
+            except DEVICE_ERRORS:
+                if now - when < TIMER_GRACE:
+                    continue  # the unit may be reconnecting; try again on the next tick
+                log.warning("giving up on the power-%s timer: the unit did not answer", action)
+            else:
+                power = action == "on"
+            self._timers.pop(action)
+            self._persist()
 
         if self._curve is None:
+            return
+        if not power:
+            self.cancel_sleep_curve()
             return
         started = datetime.fromisoformat(self._curve["started"])
         elapsed_min = (now - started).total_seconds() / 60
         if elapsed_min >= self._curve["hours"] * 60:
-            off_at_end = self._curve["off_at_end"]
+            end = Command(power=False) if self._curve["off_at_end"] else Command(sleep=False)
+            try:
+                await self._apply(end)
+            except DEVICE_ERRORS:
+                return  # try again on the next tick
             self.cancel_sleep_curve()
-            if off_at_end:
-                await self._apply(Command(power=False))
             return
         step = max(i for i, (minute, _) in enumerate(SLEEP_CURVE_STEPS) if elapsed_min >= minute)
         if step > self._curve["step"]:
+            if self._curve["direction"]:
+                offset = SLEEP_CURVE_STEPS[step][1] * self._curve["direction"]
+                try:
+                    await self._apply(Command(target_temp=self._curve["base_temp"] + offset))
+                except DEVICE_ERRORS:
+                    return  # try again on the next tick
             self._curve["step"] = step
             self._persist()
-            if self._curve["direction"]:
-                await self._apply(Command(target_temp=self._curve_target()))
 
     def _persist(self) -> None:
         self._store.save({

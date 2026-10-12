@@ -78,7 +78,30 @@ def render_block(config: Config | None) -> str:
     return "\n".join(lines)
 
 
-_MANAGED = re.compile(r"[ \t]*// >>> aircon:.*?// <<< aircon[^\n]*\n?", re.S)
+# Both markers must sit on their own line, so a device name can never imitate them.
+_MANAGED = re.compile(r"^[ \t]*// >>> aircon:.*?^[ \t]*// <<< aircon[ \t]*$\n?", re.S | re.M)
+
+
+def _with_trailing_comma(body: str) -> str:
+    """JSONC needs a comma between the user's last entry and our block."""
+    lines = body.rstrip().split("\n")
+    for i in range(len(lines) - 1, -1, -1):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        if stripped[-1] not in "{,":
+            lines[i] = lines[i].rstrip() + ","
+        break
+    return "\n".join(lines)
+
+
+def _write(path: Path, text: str) -> None:
+    """Atomic write that keeps a symlinked file (e.g. managed dotfiles) a symlink."""
+    target = path.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, target)
 
 
 def _strip_ours(text: str) -> str:
@@ -104,16 +127,14 @@ def sync(path: Path, config: Config | None) -> bool:
     end = base.rstrip().rfind("}")
     if end < 0:
         raise ValueError(f"{path}: no closing brace found")
-    updated = base[:end].rstrip() + "\n\n" + render_block(config) + "\n}\n"
+    updated = _with_trailing_comma(base[:end]) + "\n\n" + render_block(config) + "\n}\n"
     if updated == original:
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
     backup = path.with_name(path.name + ".aircon.bak")
     if path.exists() and not backup.exists():
         shutil.copy2(path, backup)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(updated)
-    os.replace(tmp, path)
+    _write(path, updated)
     return True
 
 
@@ -129,7 +150,5 @@ def remove(path: Path) -> bool:
     updated = stripped[:end].rstrip() + "\n}\n"
     if updated == original:
         return False
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(updated)
-    os.replace(tmp, path)
+    _write(path, updated)
     return True

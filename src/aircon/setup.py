@@ -16,6 +16,7 @@ from pathlib import Path
 
 from aircon.backends.haier_smartair2.backend import HaierSmartAir2Backend
 from aircon.config import (
+    MAC_PATTERN,
     Config,
     DeviceConfig,
     dump_config,
@@ -30,6 +31,8 @@ DEFAULT_BACKEND = "haier_smartair2"
 HAIER_OUIS = ("04FA83",)  # Qingdao Haier Technology
 MAX_HOSTS = 1024
 ALL_HAIER_FEATURES = ["health", "sleep", "swing_horizontal"]
+DEFAULT_NAME = "Air conditioner"
+KEEP_BACKUPS = 3
 
 
 # -- network helpers ------------------------------------------------------------------
@@ -171,9 +174,14 @@ async def discover(
     open_hosts = await scan(hosts, port)
     lookup = mac_lookup or (lambda ip: read_arp().get(ip))
     candidates = []
-    for host in open_hosts:
-        mac = lookup(host)
-        state = await read_state(host, mac, port) if mac else None
+    macs = [lookup(host) for host in open_hosts]
+
+    async def no_state() -> None:
+        return None
+
+    states = await asyncio.gather(*(read_state(host, mac, port) if mac else no_state()
+                                    for host, mac in zip(open_hosts, macs, strict=True)))
+    for host, mac, state in zip(open_hosts, macs, states, strict=True):
         configured = bool(mac) and compact_mac(mac) in known
         candidates.append(Candidate(host=host, mac=mac, state=state, port=port,
                                     configured=configured))
@@ -190,6 +198,7 @@ class ValidationResult:
     swing_style: str = "bits"
     features: list[str] = field(default_factory=list)
     checks: dict[str, bool] = field(default_factory=dict)
+    restored: bool = True  # False if the unit could not be put back as it was
 
 
 Reporter = Callable[[str, bool], None]
@@ -206,15 +215,18 @@ async def _check(backend: HaierSmartAir2Backend, cmd: Command, field_name: str, 
     return getattr(state, field_name) == expected
 
 
-async def _restore(backend: HaierSmartAir2Backend, original: State) -> None:
-    with contextlib.suppress(TimeoutError, ConnectionError):
-        if original.power:
-            await backend.apply(Command(
-                mode=original.mode, fan=original.fan, target_temp=original.target_temp,
-                swing=original.swing, health=original.health, sleep=original.sleep,
-            ))
-        else:
+async def _restore(backend: HaierSmartAir2Backend, original: State) -> bool:
+    """Put every setting back, then the power state. Returns False if the unit didn't answer."""
+    try:
+        await backend.apply(Command(
+            mode=original.mode, fan=original.fan, target_temp=original.target_temp,
+            swing=original.swing, health=original.health, sleep=original.sleep,
+        ))
+        if not original.power:
             await backend.apply(Command(power=False))
+    except (TimeoutError, ConnectionError):
+        return False
+    return True
 
 
 async def _swing_checks(host: str, mac: str, port: int, style: str, settle: float,
@@ -237,7 +249,7 @@ async def _swing_checks(host: str, mac: str, port: int, style: str, settle: floa
                 results[feature] = on and off
                 report(feature, on and off)
     finally:
-        await _restore(backend, original)
+        results["_restored"] = await _restore(backend, original)
         await backend.close()
     return results
 
@@ -247,17 +259,20 @@ async def validate_features(host: str, mac: str, port: int = DEFAULT_PORT,
                             report: Reporter = lambda label, ok: None) -> ValidationResult:
     """Exercise optional features on the real unit, then restore its state."""
     checks = await _swing_checks(host, mac, port, "bits", settle, report)
+    restored = checks.pop("_restored")
     style = "bits"
     swing_ok = all(checks.get(p) for p in ("vertical", "horizontal", "both"))
     if not swing_ok:
         byte_checks = await _swing_checks(host, mac, port, "byte", settle, report)
+        restored = byte_checks.pop("_restored") and restored
         if all(byte_checks.get(p) for p in ("vertical", "horizontal", "both")):
             style, swing_ok = "byte", True
             checks.update({f"{k}_byte": v for k, v in byte_checks.items()})
     features = [f for f in ("health", "sleep") if checks.get(f)]
     if swing_ok:
         features.append("swing_horizontal")
-    return ValidationResult(swing_style=style, features=features, checks=checks)
+    return ValidationResult(swing_style=style, features=features, checks=checks,
+                            restored=restored)
 
 
 # -- config file ---------------------------------------------------------------------------
@@ -285,20 +300,28 @@ def save_config(path: Path, config: Config) -> Path | None:
     return write_config(path, dump_config(config, HEADER))
 
 
-def add_device(path: Path, *, name: str, host: str, mac: str, port: int = DEFAULT_PORT,
+def add_device(path: Path, *, name: str | None, host: str, mac: str, port: int = DEFAULT_PORT,
                backend: str = DEFAULT_BACKEND,
                validation: ValidationResult | None = None) -> tuple[DeviceConfig, bool]:
-    """Add a device, or update the one with the same MAC. Returns (device, created)."""
+    """Add a device, or update the one with the same MAC. Returns (device, created).
+
+    Without a name, an existing device keeps its name and a new one gets a default.
+    """
+    if not MAC_PATTERN.match(compact_mac(mac)):
+        raise ValueError(f"invalid MAC address {mac!r} (12 hex digits)")
     config = load_or_empty(path)
     existing = next((d for d in config.devices
                      if d.mac and compact_mac(d.mac) == compact_mac(mac)), None)
     if existing is not None:
-        existing.name, existing.host, existing.port = name, host, port
+        existing.host, existing.port = host, port
+        if name:
+            existing.name = name
         if validation is not None:
             existing.swing_style = validation.swing_style
             existing.features = list(validation.features)
         save_config(path, config)
         return existing, False
+    name = name or DEFAULT_NAME
     device = DeviceConfig(
         name=name, backend=backend, host=host, mac=compact_mac(mac), port=port,
         swing_style=validation.swing_style if validation else "bits",
@@ -334,15 +357,26 @@ def rename_device(path: Path, device_id: str, name: str) -> DeviceConfig:
 
 
 def write_config(path: Path, text: str) -> Path | None:
-    """Write the config atomically; returns the backup path if a file was replaced."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Write the config atomically and privately (it may hold keys); returns the backup path.
+
+    A symlinked config stays a symlink, and only the last few backups are kept.
+    """
+    target = path.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
     backup = None
-    if path.exists():
-        backup = path.with_name(f"{path.name}.bak.{int(time.time())}")
-        shutil.copy2(path, backup)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
+    if target.exists():
+        backup = target.with_name(f"{target.name}.bak.{int(time.time())}")
+        shutil.copy2(target, backup)
+        backup.chmod(0o600)
+        old = sorted(target.parent.glob(f"{target.name}.bak.*"))[:-KEEP_BACKUPS]
+        for stale in old:
+            stale.unlink(missing_ok=True)
+    tmp = target.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(text)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, target)
     return backup
 
 

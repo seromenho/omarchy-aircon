@@ -602,7 +602,7 @@ Panel {
                 onClicked: {
                   var name = renameField.text.trim()
                   if (name === "") return
-                  ac.enqueue(["rename", ac.deviceId, name])
+                  ac.enqueue(["rename", "--", ac.deviceId, name])
                   renameField.text = ""
                 }
               }

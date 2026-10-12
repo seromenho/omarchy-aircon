@@ -10,7 +10,7 @@ from pathlib import Path
 from aircon import menu, setup
 from aircon.config import default_config_path
 
-DEFAULT_NAME = "Air conditioner"
+DEFAULT_NAME = setup.DEFAULT_NAME
 
 NOT_FOUND_HELP = """No air conditioner answered on TCP port 56800.
 
@@ -57,7 +57,8 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
                                  help="add (or update) a known device")
     apply.add_argument("--host", required=True)
     apply.add_argument("--mac", required=True)
-    apply.add_argument("--name", default=DEFAULT_NAME)
+    apply.add_argument("--name", default=None,
+                       help=f"name to show (default: keep the current one, or {DEFAULT_NAME!r})")
     apply.add_argument("--validate", action="store_true",
                        help="test optional features on the device (changes it briefly)")
     apply.add_argument("--json", action="store_true")
@@ -89,7 +90,10 @@ def config_path(args: argparse.Namespace) -> Path:
 
 def apply_changes(args: argparse.Namespace) -> bool:
     """Regenerate the menu and restart the daemon after the config changed."""
-    menu.sync(menu.default_menu_path(), setup.load_or_empty(config_path(args)))
+    try:
+        menu.sync(menu.default_menu_path(), setup.load_or_empty(config_path(args)))
+    except (OSError, ValueError) as exc:  # a broken menu file must not block the restart
+        print(f"aircon: could not update the Omarchy menu: {exc}")
     if _opt(args, "no_restart", False):
         return False
     return setup.restart_daemon()
@@ -121,7 +125,7 @@ def _ask(prompt: str, default: str = "") -> str:
     return answer or default
 
 
-def _save(args: argparse.Namespace, name: str, host: str, mac: str,
+def _save(args: argparse.Namespace, name: str | None, host: str, mac: str,
           validation: setup.ValidationResult | None) -> dict:
     path = config_path(args)
     device, created = setup.add_device(path, name=name, host=host, mac=mac, port=_port(args),
@@ -137,12 +141,16 @@ def _save(args: argparse.Namespace, name: str, host: str, mac: str,
         "swing_style": device.swing_style,
         "features": device.features,
         "checks": validation.checks if validation else {},
+        "restored": validation.restored if validation else True,
     }
 
 
 def _report_saved(args: argparse.Namespace, result: dict) -> None:
     verb = "Added" if result["created"] else "Updated"
     print(f"{verb} {result['name']} (id: {result['id']}) in {result['config']}")
+    if not result["restored"]:
+        print("Warning: the air conditioner did not answer while restoring its settings; "
+              "check it with the remote.")
     if result["restarted"]:
         print("Restarted aircond.")
     elif not _opt(args, "no_restart", False):

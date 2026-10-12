@@ -24,6 +24,14 @@ MAX_MISSED_POLLS = 3
 FAN_ONLY_FALLBACK_SPEED = "mid"
 
 
+def _safe_call(callback: Callable, value: object) -> None:
+    """A failing listener must not take the connection down with it."""
+    try:
+        callback(value)
+    except Exception:
+        log.exception("state listener failed")
+
+
 class HaierSmartAir2Backend:
     name = "haier_smartair2"
 
@@ -36,6 +44,9 @@ class HaierSmartAir2Backend:
         gap: float = 0.15,
         reconnect_max: float = 30.0,
     ) -> None:
+        if len(device.mac.replace(":", "").replace("-", "")) != 12:
+            raise ValueError(f"{device.name}: a Haier SmartAir2 unit needs the 12-digit MAC "
+                             "printed on its Wi-Fi module")
         if device.swing_style not in p.SWING_STYLES:
             raise ValueError(f"swing_style must be one of: {', '.join(p.SWING_STYLES)}")
         self.device = device
@@ -137,12 +148,14 @@ class HaierSmartAir2Backend:
             backoff = 1.0
             self._writer = writer
             self.last_error = None
-            self._set_connected(True)
-            poller = asyncio.create_task(self._poll_loop())
+            poller = asyncio.create_task(self._poll_loop())  # its first reply marks us connected
             try:
                 await self._read_loop(reader)
             except (OSError, ConnectionError) as exc:
                 self._set_error(f"connection lost ({exc})")
+            except Exception as exc:  # keep reconnecting whatever happened
+                log.exception("unexpected error on the connection")
+                self._set_error(f"connection error ({exc})")
             finally:
                 poller.cancel()
                 self._writer = None
@@ -179,6 +192,8 @@ class HaierSmartAir2Backend:
                     self._writer.close()
             except ConnectionError:
                 pass
+            except Exception:  # never let one bad poll stop polling for good
+                log.exception("status poll failed")
             await asyncio.sleep(self.poll_interval)
 
     def _handle_frame(self, seq: int, frame: bytes) -> None:
@@ -189,10 +204,13 @@ class HaierSmartAir2Backend:
             self.last_frame = frame
             new_state = replace(p.decode_state(frame, self.device.swing_style),
                                 alarm=self.state.alarm)
+            if not self.connected:
+                # Only a valid status frame proves we reached the right module.
+                self._set_connected(True)
             if new_state != self.state:
                 self.state = new_state
                 for callback in self._state_callbacks:
-                    callback(new_state)
+                    _safe_call(callback, new_state)
         else:
             self.unknown_frames = (self.unknown_frames + [frame.hex(" ")])[-5:]
             log.debug("unknown frame type 0x%02x: %s", frame_type, frame.hex(" "))
@@ -239,7 +257,7 @@ class HaierSmartAir2Backend:
             return
         self.connected = connected
         for callback in self._connection_callbacks:
-            callback(connected)
+            _safe_call(callback, connected)
 
     def _set_error(self, message: str) -> None:
         if message != self.last_error:

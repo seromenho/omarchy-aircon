@@ -117,14 +117,25 @@ Item {
     id: commandProcess
     running: false
     command: []
-    stderr: StdioCollector { id: commandStderr; waitForEnd: true }
+    // The exit can be reported before stderr is fully read: show the error at either moment.
+    stderr: StdioCollector {
+      id: commandStderr
+      waitForEnd: true
+      onStreamFinished: root._showCommandError()
+    }
     onExited: function(exitCode) {
-      if (exitCode !== 0) {
-        var message = String(commandStderr.text || "").trim().replace(/^aircon: /, "")
-        root.commandError = message || "Command failed"
-      }
+      root._lastExit = exitCode
+      root._showCommandError()
       root._next()
     }
+  }
+
+  property int _lastExit: 0
+
+  function _showCommandError() {
+    if (_lastExit === 0) return
+    var message = String(commandStderr.text || "").trim().replace(/^aircon: /, "")
+    commandError = message || "Command failed"
   }
 
   Process {
@@ -203,8 +214,9 @@ Item {
     setupError = ""
     savedId = ""
     _saveDone = { exited: false, output: false, code: 0 }
-    var args = [root.cli, "setup", "apply", "--host", hostAddress, "--mac", mac,
-                "--name", name, "--json"]
+    // --opt=value keeps values that start with "-" from being read as options.
+    var args = [root.cli, "setup", "apply", "--host=" + hostAddress, "--mac=" + mac,
+                "--name=" + name, "--json"]
     if (validate) args.push("--validate")
     saveProcess.command = args
     saveProcess.running = true

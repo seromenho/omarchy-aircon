@@ -24,7 +24,7 @@ from aircon.config import (
     default_socket_path,
     load_config,
 )
-from aircon.model import Command
+from aircon.model import OPTIONAL_FEATURES, Command
 from aircon.scheduler import Clock, Scheduler, local_now
 from aircon.store import Store, default_state_path
 
@@ -86,6 +86,8 @@ class Daemon:
         for runtime in self.devices.values():
             await runtime.backend.start()
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+        if await _socket_in_use(self.socket_path):
+            raise RuntimeError(f"another aircond is already listening on {self.socket_path}")
         with contextlib.suppress(FileNotFoundError):
             self.socket_path.unlink()
         self._server = await asyncio.start_unix_server(
@@ -171,19 +173,23 @@ class Daemon:
             for device_id, runtime in self.devices.items():
                 try:
                     backend = runtime.backend
-                    runtime.scheduler.filter_tick(backend.connected and backend.state.power)
-                    await runtime.scheduler.tick()
-                except DEVICE_ERRORS as exc:
-                    log.warning("%s: scheduled action failed: %s", device_id, exc)
+                    on = backend.connected and backend.state.power
+                    runtime.scheduler.filter_tick(on)
+                    await runtime.scheduler.tick(backend.state.power)
                 except Exception:
                     log.exception("%s: scheduler tick failed", device_id)
-            self._publish()
+            with contextlib.suppress(Exception):
+                self._publish()
             await asyncio.sleep(self.tick_interval)
 
     def _scheduler_apply(self, device_id: str):
         async def apply(cmd: Command) -> None:
             backend = self.devices[device_id].backend
-            await backend.apply(cmd.validate(backend.capabilities))
+            # The scheduler is brand-agnostic: drop features this unit doesn't have.
+            changes = {k: v for k, v in cmd.changes().items()
+                       if k not in OPTIONAL_FEATURES or k in backend.capabilities.features}
+            if changes:
+                await backend.apply(Command(**changes).validate(backend.capabilities))
             self._publish()
 
         return apply
@@ -193,17 +199,31 @@ class Daemon:
     async def _serve_client(self, reader: asyncio.StreamReader,
                             writer: asyncio.StreamWriter) -> None:
         try:
-            while line := await reader.readline():
+            while True:
+                try:
+                    line = await reader.readline()
+                except ValueError:  # longer than the stream limit (64 KiB)
+                    writer.write(b'{"ok": false, "error": "request too long"}\n')
+                    break
+                if not line:
+                    break
                 try:
                     request = json.loads(line)
                     if not isinstance(request, dict):
                         raise ValueError("request must be a JSON object")
                     response = await self._handle(request, writer)
-                except (ValueError, TypeError) as exc:
-                    response = {"ok": False, "error": str(exc)}
                 except DEVICE_ERRORS as exc:
                     response = {"ok": False, "error": str(exc) or "air conditioner unavailable"}
+                except (ValueError, TypeError, OverflowError, RecursionError) as exc:
+                    response = {"ok": False, "error": str(exc) or "invalid request"}
+                except Exception as exc:
+                    log.exception("request failed")
+                    response = {"ok": False, "error": f"internal error: {exc}"}
                 if response is not None:
+                    if not response.get("ok"):
+                        # Clients may have shown the change optimistically: resend the truth.
+                        self._last_published = None
+                        self._publish()
                     writer.write((json.dumps(response) + "\n").encode())
                     await writer.drain()
         except (ConnectionError, asyncio.IncompleteReadError):
@@ -300,9 +320,28 @@ class Daemon:
         raise ValueError("timer needs 'at' or 'in_minutes'")
 
 
+async def _socket_in_use(path: Path) -> bool:
+    try:
+        _reader, writer = await asyncio.open_unix_connection(str(path))
+    except OSError:
+        return False
+    writer.close()
+    return True
+
+
+def build_daemon(config: Config | None, socket_path: Path, state_path: Path,
+                 config_error: str | None = None) -> Daemon:
+    try:
+        return Daemon(config, socket_path, state_path, config_error=config_error)
+    except (ValueError, LookupError) as exc:
+        # A config the backends reject: stay up and tell clients what is wrong.
+        log.error("invalid configuration: %s", exc)
+        return Daemon(None, socket_path, state_path, config_error=f"invalid config: {exc}")
+
+
 async def _serve(config: Config | None, socket_path: Path, state_path: Path,
                  config_error: str | None) -> None:
-    daemon = Daemon(config, socket_path, state_path, config_error=config_error)
+    daemon = build_daemon(config, socket_path, state_path, config_error)
     await daemon.start()
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

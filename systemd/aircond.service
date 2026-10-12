@@ -5,6 +5,7 @@ Description=aircon daemon (local air conditioner control)
 ExecStart=%h/.local/bin/aircond
 Restart=on-failure
 RestartSec=3
+NoNewPrivileges=yes
 
 [Install]
 WantedBy=default.target

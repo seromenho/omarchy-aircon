@@ -102,10 +102,14 @@ def parse_clock(text: str, now: datetime | None = None) -> datetime:
     now = now or datetime.now().astimezone()
     try:
         hour, minute = (int(part) for part in text.split(":"))
-        at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        # Work in naive local time and attach the offset last, so a daylight-saving
+        # change overnight still lands on the right clock reading.
+        at = now.replace(tzinfo=None, hour=hour, minute=minute, second=0, microsecond=0)
     except ValueError:
         raise ValueError(f"invalid time {text!r} (use HH:MM)") from None
-    return at if at > now else at + timedelta(days=1)
+    if at <= now.replace(tzinfo=None):
+        at += timedelta(days=1)
+    return at.astimezone()
 
 
 def _on_off(value: str) -> bool:

@@ -80,6 +80,7 @@ async def test_fan_mode_never_sends_auto_speed(dongle):
     await backend.apply(Command(fan="auto"))
     state = await backend.apply(Command(mode="fan"))
     assert (state.mode, state.fan) == ("fan", "mid")
+    await backend.close()
 
 
 async def test_power_off_uses_power_off_command(dongle):

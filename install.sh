@@ -127,6 +127,12 @@ fi
 if [[ ! -f "$APP_CONFIG" ]]; then
   step "Almost there: click the new icon in the bar to find and add your air conditioner"
 else
+  chmod 600 "$APP_CONFIG"  # it may hold keys; older versions wrote it world-readable
   step "Done"
+  # Give the service a moment to reach the units before showing them.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    "$BIN_DIR/aircon" status 2>/dev/null | grep -q "unreachable" || break
+    sleep 0.5
+  done
   "$BIN_DIR/aircon" status || true
 fi

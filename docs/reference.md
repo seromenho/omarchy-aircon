@@ -146,7 +146,16 @@ options = { }                   # backend-specific settings (keys, tokens, …)
 threshold_hours = 300
 ```
 
-After editing by hand run `aircon menu sync` and `systemctl --user restart aircond`.
+After editing by hand run `aircon menu sync` and `systemctl --user restart aircond`. If the file
+has a mistake, the panel says so instead of showing your units.
+
+Good to know:
+
+- Haier units need their `mac` (12 hex digits, printed on the Wi-Fi module).
+- Setup, rename and remove rewrite the file, so comments are not kept. The file is written
+  with owner-only permissions (it may hold keys in `options`), and the last three versions
+  are kept as `config.toml.bak.*`. If the file is a symlink (dotfiles), the link is kept and
+  its target is updated.
 
 ## Bar widget and keybinding
 
@@ -203,7 +212,7 @@ device carries `id`, `name`, `backend`, `host`, `connected`, `capabilities`, the
 Works with Haier units fitted with the SmartAir2 USB Wi-Fi module (KZW-W002 / MK-QTWIFI
 family), the one that pairs with the **HaierSmartAir2** app (not hOn). Pair it once with that
 app; afterwards neither the app nor the internet is needed. The module listens on TCP port
-56800 without encryption.
+56800 without encryption or authentication: anything on your network that answers on that port is trusted, so keep the unit on a network you control.
 
 Behaviour observed on a unit with module firmware 2.3.12:
 
