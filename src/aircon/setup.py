@@ -173,10 +173,24 @@ async def discover_midea(hosts: Iterable[str] | None = None,
     from aircon.backends.midea_lan import protocol
 
     known = set(configured_ids)
+    items = await protocol.discover(hosts)
+    if hosts is None and not items:
+        local_hosts = [str(h) for net in default_subnets()
+                       for h in list(net.hosts())[:MAX_HOSTS]]
+        if local_hosts:
+            items = await protocol.discover_unicast(local_hosts)
+            # A sweep of unknown addresses can fill the router's ARP queue and lose
+            # replies. Retry now-known neighbors on a quiet socket and merge the results.
+            allowed = set(local_hosts)
+            neighbors = [host for host in read_arp() if host in allowed]
+            if neighbors:
+                retry = await protocol.discover_unicast(neighbors)
+                by_id = {item["options"]["device_id"]: item for item in items + retry}
+                items = list(by_id.values())
     return [Candidate(host=item["host"], mac=None, state=None, port=item["port"],
                       backend="midea_lan", options=item["options"],
                       configured=item["options"]["device_id"] in known)
-            for item in await protocol.discover(hosts)]
+            for item in items]
 
 
 async def discover(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 import tomllib
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from aircon.config import default_config_path
 
 DEFAULT_NAME = setup.DEFAULT_NAME
 
-NOT_FOUND_HELP = """No air conditioner answered on TCP port 56800.
+NOT_FOUND_HELP = """No air conditioner answered for Haier SmartAir2 on TCP port {port}.
 
 Check that:
   - the unit's Wi-Fi module was paired once with the HaierSmartAir2 app (not hOn);
@@ -21,7 +22,20 @@ Check that:
   - the unit is plugged in.
 
 If you know its address, run:
-  aircon setup apply --host <ip> --mac <MAC printed on the Wi-Fi module>"""
+  aircon setup apply --backend haier_smartair2 --host <ip> --mac <module MAC>
+
+For Midea / NetHome Plus, choose Midea in setup or run:
+  aircon setup --backend midea_lan"""
+
+MIDEA_NOT_FOUND_HELP = """No Midea air conditioner was found on the local network.
+
+Pair the unit with NetHome Plus or Midea Air, and check that it is plugged in
+and connected to the same network as this computer.
+
+If you know its address, run:
+  aircon setup discover --backend midea_lan --hosts <ip>
+
+V3 units also need a local token/key file when adding them."""
 
 FEATURE_WARNING = (
     "Test optional features (left/right swing, health, sleep)?\n"
@@ -38,11 +52,12 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     common.add_argument("--no-restart", action="store_true", default=argparse.SUPPRESS,
                         help="do not restart aircond afterwards")
     common.add_argument("--port", type=int, default=argparse.SUPPRESS,
-                        help=f"device port (default: {setup.DEFAULT_PORT})")
+                        help="device port (default: Midea 6444, Haier 56800)")
     common.add_argument("--hosts", nargs="+", default=argparse.SUPPRESS,
                         help="only probe these IP addresses")
     common.add_argument("--backend", choices=("haier_smartair2", "midea_lan"),
-                        default=argparse.SUPPRESS, help="device backend (default: haier_smartair2)")
+                        default=argparse.SUPPRESS,
+                        help="device backend (interactive setup asks which brand)")
     common.add_argument("--settle", type=float, default=argparse.SUPPRESS,
                         help=argparse.SUPPRESS)
 
@@ -77,10 +92,19 @@ def run(args: argparse.Namespace) -> int:
         return _discover(args)
     if command == "apply":
         return _apply(args)
-    if _opt(args, "backend", setup.DEFAULT_BACKEND) == "midea_lan":
-        print("For Midea, use aircon setup discover --backend midea_lan, then "
-              "aircon setup apply --backend midea_lan (see docs/reference.md).")
-        return 1
+    if not hasattr(args, "backend"):
+        if not sys.stdin.isatty():
+            raise ValueError("choose a brand: --backend midea_lan (NetHome Plus / Midea Air) "
+                             "or --backend haier_smartair2 (HaierSmartAir2)")
+        print("Choose your air conditioner:\n"
+              "  1) Midea — NetHome Plus / Midea Air\n"
+              "  2) Haier — HaierSmartAir2")
+        choice = _ask("Brand [1]: ", "1")
+        if choice not in ("1", "2"):
+            raise ValueError("choose 1 for Midea or 2 for Haier")
+        args.backend = "midea_lan" if choice == "1" else "haier_smartair2"
+    if args.backend == "midea_lan":
+        return _wizard_midea(args)
     return _wizard(args)
 
 
@@ -92,7 +116,14 @@ def _opt(args: argparse.Namespace, name: str, default):
 
 
 def _port(args: argparse.Namespace) -> int:
-    return _opt(args, "port", setup.DEFAULT_PORT)
+    default = 6444 if _opt(args, "backend", setup.DEFAULT_BACKEND) == "midea_lan" else 56800
+    return _opt(args, "port", default)
+
+
+def _not_found_help(args: argparse.Namespace) -> str:
+    if _opt(args, "backend", setup.DEFAULT_BACKEND) == "midea_lan":
+        return MIDEA_NOT_FOUND_HELP
+    return NOT_FOUND_HELP.format(port=_port(args))
 
 
 def config_path(args: argparse.Namespace) -> Path:
@@ -198,8 +229,7 @@ def _discover(args: argparse.Namespace) -> int:
         print(json.dumps([c.to_dict() for c in candidates]))
         return 0
     if not candidates:
-        print("No Midea AC found; check pairing and the local network. Try --hosts IP."
-              if _opt(args, "backend", setup.DEFAULT_BACKEND) == "midea_lan" else NOT_FOUND_HELP)
+        print(_not_found_help(args))
         return 1
     for candidate in candidates:
         print(describe(candidate))
@@ -235,7 +265,7 @@ def _apply_midea(args: argparse.Namespace) -> int:
         raise ValueError("Midea --validate is not supported; optional features stay disabled")
     options = {}
     if args.options_file:
-        with args.options_file.open("rb") as fh:
+        with args.options_file.expanduser().open("rb") as fh:
             options = tomllib.load(fh)
     if args.device_id is not None:
         options["device_id"] = args.device_id
@@ -258,7 +288,7 @@ def _apply_midea(args: argparse.Namespace) -> int:
 
 
 def _wizard(args: argparse.Namespace) -> int:
-    print("Looking for air conditioners on the local network...", flush=True)
+    print("Looking for Haier SmartAir2 air conditioners on the local network...", flush=True)
     candidates = _discover_candidates(args)
     usable = [c for c in candidates if c.state is not None and c.mac and not c.configured]
     if not usable:
@@ -267,7 +297,7 @@ def _wizard(args: argparse.Namespace) -> int:
             for candidate in candidates:
                 print(f"  {describe(candidate)}")
         else:
-            print(NOT_FOUND_HELP)
+            print(_not_found_help(args))
         return 1
 
     if len(usable) == 1:
@@ -299,3 +329,41 @@ def _wizard(args: argparse.Namespace) -> int:
     _report_saved(args, result)
     print("Done. Open the panel from the bar, or run: aircon status")
     return 0
+
+
+def _wizard_midea(args: argparse.Namespace) -> int:
+    print("Looking for Midea air conditioners on the local network...", flush=True)
+    candidates = _discover_candidates(args)
+    usable = [c for c in candidates if not c.configured]
+    if not usable:
+        if candidates:
+            print("Every Midea air conditioner found is already added:")
+            for candidate in candidates:
+                print(f"  {describe(candidate)}")
+        else:
+            print(_not_found_help(args))
+        return 1
+    for number, candidate in enumerate(usable, start=1):
+        print(f"  {number}) {describe(candidate)}")
+    answer = _ask("Which one? [1] ", "1")
+    if not answer.isdigit() or not 1 <= int(answer) <= len(usable):
+        print("Nothing changed.")
+        return 1
+    choice = usable[int(answer) - 1]
+    name = _ask(f"Name [{DEFAULT_NAME}]: ", DEFAULT_NAME)
+    options_file = None
+    if choice.options["protocol_version"] == 3:
+        print("This unit needs its local token/key in a private TOML file.\n"
+              "See docs/reference.md, Midea LAN notes, for how to obtain them.")
+        path = _ask("Token/key file path (leave empty to cancel): ")
+        if not path:
+            print("Nothing changed. Save your credentials file, then run setup again.")
+            return 1
+        options_file = Path(path)
+    apply_args = argparse.Namespace(**{
+        **vars(args), "host": choice.host, "port": choice.port, "name": name,
+        "device_id": choice.options["device_id"],
+        "protocol_version": choice.options["protocol_version"],
+        "options_file": options_file, "validate": False, "json": False,
+    })
+    return _apply_midea(apply_args)

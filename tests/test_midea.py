@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from fake_midea import FakeMidea
 
-from aircon import cli, setup
+from aircon import cli, setup, setup_cli
 from aircon.backends import create_backend
 from aircon.backends.midea_lan import protocol as p
 from aircon.backends.midea_lan.backend import MideaLANBackend
@@ -255,3 +255,126 @@ def test_actual_library_mapping_without_network():
     assert (state.mode, state.fan, state.swing, state.target_temp) == ("fan", "mid", "both", 22)
     assert set(p.capabilities(client, []).modes) == set(p.MODES)
     p.close_client(client)
+
+
+async def test_empty_broadcast_falls_back_to_local_hosts(monkeypatch):
+    import ipaddress
+
+    calls = []
+
+    async def empty(hosts):
+        return []
+
+    async def unicast(hosts):
+        calls.extend(hosts)
+        return [{"host": "192.168.1.50", "port": 6444,
+                 "options": {"device_id": "123", "protocol_version": 3}}]
+
+    monkeypatch.setattr(p, "discover", empty)
+    monkeypatch.setattr(p, "discover_unicast", unicast)
+    monkeypatch.setattr(setup, "read_arp", lambda: {})
+    monkeypatch.setattr(setup, "default_subnets",
+                        lambda: [ipaddress.ip_network("192.168.1.0/24")])
+    candidates = await setup.discover_midea(configured_ids=["123"])
+    assert len(candidates) == 1 and candidates[0].configured
+    assert "192.168.1.50" in calls and len(calls) == 254
+
+
+async def test_fallback_retries_neighbors_and_merges(monkeypatch):
+    import ipaddress
+
+    async def empty(hosts):
+        return []
+
+    calls = []
+
+    async def unicast(hosts):
+        calls.append(list(hosts))
+        return [{"host": "192.168.1.50" if len(calls) == 1 else "192.168.1.51", "port": 6444,
+                 "options": {"device_id": str(122 + len(calls)), "protocol_version": 3}}]
+
+    monkeypatch.setattr(p, "discover", empty)
+    monkeypatch.setattr(p, "discover_unicast", unicast)
+    monkeypatch.setattr(setup, "default_subnets",
+                        lambda: [ipaddress.ip_network("192.168.1.0/24")])
+    monkeypatch.setattr(setup, "read_arp", lambda: {"192.168.1.51": "fake", "203.0.113.1": "fake"})
+    candidates = await setup.discover_midea()
+    assert {c.host for c in candidates} == {"192.168.1.50", "192.168.1.51"}
+    assert calls[1] == ["192.168.1.51"]
+
+
+def test_plain_setup_asks_for_brand_and_uses_midea(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(setup_cli, "_ask", lambda *args: "1")
+    seen = []
+
+    async def empty(hosts, configured_ids):
+        seen.append(hosts)
+        return []
+
+    monkeypatch.setattr(setup, "discover_midea", empty)
+    assert cli.main(["setup", "--no-restart"]) == 1
+    output = capsys.readouterr().out
+    assert "Choose your air conditioner" in output and "No Midea air conditioner" in output
+    assert "56800" not in output and len(seen) == 1
+
+
+def test_plain_noninteractive_setup_requires_brand(capsys):
+    assert cli.main(["setup", "--no-restart"]) == 1
+    assert "choose a brand" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("version", [2, 3])
+def test_midea_wizard_adds_without_haier_prompts(tmp_path, monkeypatch, capsys, version):
+    config = tmp_path / "config.toml"
+    credentials = tmp_path / "options.toml"
+    credentials.write_text(f'token = "{"01" * 64}"\nkey = "{"02" * 32}"\n')
+    answers = iter(["1", "Bedroom", str(credentials)])
+    monkeypatch.setattr(setup_cli, "_ask", lambda *args: next(answers))
+    candidate = setup.Candidate(host="192.168.1.50", mac=None, state=None, port=6444,
+                                backend="midea_lan",
+                                options={"device_id": "123", "protocol_version": version})
+    monkeypatch.setattr(setup_cli, "_discover_candidates", lambda args: [candidate])
+    assert cli.main(["setup", "--backend", "midea_lan", "--config", str(config),
+                     "--no-restart"]) == 0
+    saved = load_config(config).device
+    assert saved.backend == "midea_lan" and saved.options["device_id"] == "123"
+    assert saved.port == 6444 and saved.name == "Bedroom"
+    output = capsys.readouterr().out
+    assert "Haier" not in output and "MAC" not in output
+
+
+async def test_unicast_discovery_decodes_fake_udp_reply(monkeypatch):
+    pytest.importorskip("msmart.discover")
+    from msmart.const import DISCOVERY_MSG
+    from msmart.discover import Discover
+
+    requests = []
+
+    class FakeDongle(asyncio.DatagramProtocol):
+        def connection_made(self, transport):
+            self.transport = transport
+
+        def datagram_received(self, data, addr):
+            requests.append(data)
+            self.transport.sendto(b"fake-midea-info", addr)
+
+    def version(data):
+        assert data == b"fake-midea-info"
+        return 3
+
+    async def info(host, protocol_version, data):
+        return {"device_type": 0xAC, "device_id": 123, "port": 6444}
+
+    monkeypatch.setattr(Discover, "_get_device_version", version)
+    monkeypatch.setattr(Discover, "_get_device_info", info)
+    transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
+        FakeDongle, local_addr=("127.0.0.1", 0))
+    try:
+        port = transport.get_extra_info("sockname")[1]
+        found = await p.discover_unicast(["127.0.0.1"], timeout=0.05, ports=(port,))
+        assert requests == [DISCOVERY_MSG]
+        assert found == [{"host": "127.0.0.1", "port": 6444,
+                          "options": {"device_id": "123", "protocol_version": 3}}]
+    finally:
+        transport.close()

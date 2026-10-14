@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 import re
 from dataclasses import dataclass
@@ -144,4 +145,56 @@ async def discover(hosts=None, *, timeout: float = 5) -> list[dict]:
                 "host": client.ip, "port": client.port,
                 "options": {"device_id": str(client.id), "protocol_version": client.version},
             }
+    return list(found.values())
+
+
+async def discover_unicast(hosts, *, timeout: float = 5,
+                           ports: tuple[int, ...] = (6445, 20086)) -> list[dict]:
+    """Probe local hosts on one socket when a firewall drops broadcast replies.
+
+    Responses to directed requests can pass established-connection firewall rules.
+    The library's decoder is reused; authentication and cloud access are never invoked.
+    """
+    try:
+        from msmart.const import DISCOVERY_MSG
+        from msmart.discover import Discover, DiscoverError
+    except ImportError:
+        raise RuntimeError(DEPENDENCY_HELP) from None
+
+    replies: dict[str, bytes] = {}
+    allowed = set(hosts)
+
+    class Replies(asyncio.DatagramProtocol):
+        def datagram_received(self, data: bytes, addr: tuple) -> None:
+            if addr[0] in allowed:
+                replies[addr[0]] = data
+
+    transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
+        Replies, local_addr=("0.0.0.0", 0))
+    try:
+        for index, host in enumerate(sorted(allowed)):
+            for port in ports:
+                transport.sendto(DISCOVERY_MSG, (host, port))
+            if index % 32 == 31:
+                await asyncio.sleep(0.02)  # avoid flooding the router's ARP queue
+        await asyncio.sleep(timeout)
+    finally:
+        transport.close()
+
+    found: dict[int, dict] = {}
+    for host, data in replies.items():
+        try:
+            # msmart-ng exposes no public metadata-only decoder. Keep private calls here.
+            version = Discover._get_device_version(data)
+            if version not in (2, 3):
+                continue
+            info = await Discover._get_device_info(host, version, data)
+            if info["device_type"] != 0xAC:
+                continue
+            found[info["device_id"]] = {
+                "host": host, "port": info["port"],
+                "options": {"device_id": str(info["device_id"]), "protocol_version": version},
+            }
+        except (DiscoverError, ValueError, IndexError, UnicodeError):
+            continue
     return list(found.values())

@@ -98,7 +98,9 @@ Setup itself happens in the bar panel (or with `aircon setup`, below).
 
 ## Setup from the command line
 
-For Haier, the panel's setup and `aircon setup` do the same thing: scan the local network for devices
+The panel and interactive `aircon setup` first let you choose Midea / NetHome Plus or
+Haier / SmartAir2. Midea setup discovers the device ID and protocol version; V3 units ask for
+a private token/key TOML file. For Haier, they scan the local network for devices
 answering on TCP port 56800, show what was found (address, MAC, current state), ask for a
 name and, if you agree, test the optional features (left/right swing, health, sleep). That
 test changes the unit for about a minute and then restores it. The result is written to
@@ -290,10 +292,17 @@ is kept during uninstall. Remove it manually for a clean uninstall. Other backen
 need this dependency. For development use `uv sync --extra midea` and
 `uv run --extra midea python -m aircon.cli ...`.
 
-Discovery returns the address, device ID and protocol version. It explicitly disables
+Discovery returns the address, device ID and protocol version. When no supported device
+answers the broadcast, setup also sends direct discovery requests to hosts on the local
+networks carrying the default route (at most 1024 hosts per network). This handles firewalls
+such as UFW that drop broadcast replies but accept responses to direct requests. No firewall
+changes are needed. It then retries known local neighbors to recover replies lost while the
+router resolves new addresses; allow about 15 seconds for the complete search.
+Discovery explicitly disables
 automatic connection: it sends only local discovery requests, never contacts the cloud,
-authenticates or changes settings. The panel's **+ Add** wizard continues to discover Haier
-units; add Midea units with the CLI or config file. Configured Midea units use the normal
+authenticates or changes settings. Choose **Midea / NetHome Plus** in the panel's **+ Add**
+wizard, or run `aircon setup --backend midea_lan`. V3 setup asks for the path to your private
+credentials file, with `~` supported. Configured Midea units use the normal
 panel, timers, sleep curve and menu.
 
 V2 needs only the device ID:
@@ -305,7 +314,7 @@ aircon setup apply --backend midea_lan --host 192.168.1.50 \
 
 V3 additionally needs a token and key. Obtain those once using the upstream `msmart-ng`
 discovery tool (`msmart-ng discover --help` for account/region options, then
-`msmart-ng discover`). The installer puts that executable in the environment's `bin/`
+`msmart-ng discover 192.168.1.50` for a known address). The installer puts that executable in the environment's `bin/`
 directory. **That upstream command can contact Midea's cloud** to obtain credentials;
 aircon itself never does. Keep the output private and save the successful token/key for
 future use without internet access. If the module is paired again, new credentials may be

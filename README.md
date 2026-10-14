@@ -45,8 +45,8 @@ Then click the new icon in the bar:
 
 1. **Finish install**: sets up the small background service (a few seconds, no password) and
    asks whether to add quick actions to the Omarchy menu.
-2. **Find your air conditioner**: the panel looks for it on your network; pick yours and give
-   it a name. Use **+ Add** for more rooms.
+2. **Find your air conditioner**: choose Midea or Haier, pick your unit and give it a name.
+   Midea V3 units also need a private token/key file. Use **+ Add** for more rooms.
 
 To update later: `omarchy plugin update io.github.seromenho.aircon`. The widget picks up the
 new version by itself.

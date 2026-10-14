@@ -77,7 +77,9 @@ Panel {
   }
 
   function launchSetup() {
-    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", ac.cli + " setup"])
+    var command = ac.cli + " setup"
+    if (ac.setupBackend !== "") command += " --backend " + ac.setupBackend
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", command])
     root.close()
   }
 

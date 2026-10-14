@@ -5,7 +5,7 @@
   "version": "0.3.0",
   "author": "seromenho",
   "license": "MIT",
-  "description": "Control your air conditioners from the bar, locally, with no cloud. Haier SmartAir2 first; pluggable backends for other brands.",
+  "description": "Control Midea and Haier air conditioners from the bar over your local network.",
   "kinds": [
     "bar-widget"
   ],

@@ -179,6 +179,7 @@ Item {
   // -- in-panel setup ---------------------------------------------------------------------
 
   property bool discovering: false
+  property string setupBackend: ""
   property bool discovered: false
   property var candidates: []
   property bool saving: false
@@ -186,39 +187,51 @@ Item {
   property string savedId: ""
 
   function discover() {
-    if (discoverProcess.running) return
+    if (discoverProcess.running || setupBackend === "") return
     discovering = true
     discovered = false
     candidates = []
     setupError = ""
-    _discoverDone = { exited: false, output: false }
-    discoverProcess.command = [root.cli, "setup", "discover", "--json"]
+    _discoverDone = { exited: false, output: false, error: false, code: 0 }
+    discoverProcess.command = [root.cli, "setup", "discover", "--backend=" + setupBackend, "--json"]
     discoverProcess.running = true
   }
 
-  function addDevice(hostAddress, mac, name, validate) {
+  function addDevice(hostAddress, mac, name, validate, midea) {
     if (saveProcess.running) return
     saving = true
     setupError = ""
     savedId = ""
     _saveDone = { exited: false, output: false, code: 0 }
     // --opt=value keeps values that start with "-" from being read as options.
-    var args = [root.cli, "setup", "apply", "--host=" + hostAddress, "--mac=" + mac,
+    var args = [root.cli, "setup", "apply", "--backend=" + setupBackend, "--host=" + hostAddress,
                 "--name=" + name, "--json"]
-    if (validate) args.push("--validate")
+    if (setupBackend === "midea_lan") {
+      args.push("--device-id=" + midea.deviceId, "--protocol-version=" + midea.version)
+      if (midea.port) args.push("--port=" + midea.port)
+      if (midea.optionsFile) args.push("--options-file=" + midea.optionsFile)
+    } else {
+      args.push("--mac=" + mac)
+      if (validate) args.push("--validate")
+    }
     saveProcess.command = args
     saveProcess.running = true
   }
 
   // A Process can report its exit before its output stream is drained, so each run
   // finishes only once both have happened.
-  property var _discoverDone: ({ exited: false, output: false })
+  property var _discoverDone: ({ exited: false, output: false, error: false, code: 0 })
   property var _saveDone: ({ exited: false, output: false, code: 0 })
 
   function _finishDiscover() {
-    if (!_discoverDone.exited || !_discoverDone.output) return
+    if (!_discoverDone.exited || !_discoverDone.output || !_discoverDone.error) return
     discovering = false
     discovered = true
+    if (_discoverDone.code !== 0) {
+      candidates = []
+      setupError = String(discoverStderr.text || "").trim() || "Could not search the network"
+      return
+    }
     try {
       candidates = JSON.parse(String(discoverStdout.text || "[]"))
     } catch (e) {
@@ -250,7 +263,16 @@ Item {
       waitForEnd: true
       onStreamFinished: { root._discoverDone.output = true; root._finishDiscover() }
     }
-    onExited: function(exitCode) { root._discoverDone.exited = true; root._finishDiscover() }
+    stderr: StdioCollector {
+      id: discoverStderr
+      waitForEnd: true
+      onStreamFinished: { root._discoverDone.error = true; root._finishDiscover() }
+    }
+    onExited: function(exitCode) {
+      root._discoverDone.code = exitCode
+      root._discoverDone.exited = true
+      root._finishDiscover()
+    }
   }
 
   Process {
