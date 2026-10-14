@@ -1,7 +1,7 @@
 # omarchy-aircon
 
 Control your air conditioner from the [Omarchy](https://omarchy.org/) status bar.
-No cloud, no phone app, no hunting for the remote.
+Daily control stays on your network. No hunting for the remote.
 
 <p align="center">
   <img src="preview.png" alt="The aircon widget in the Omarchy bar with its panel open" width="320">
@@ -20,13 +20,17 @@ No cloud, no phone app, no hunting for the remote.
 
 - **Haier** units with the SmartAir2 USB Wi-Fi module (the one paired with the
   HaierSmartAir2 app).
+- **Midea** Wi-Fi ACs using SmartHome / NetHome Plus / Midea Air (V2/V3), with optional
+  Midea support. [Midea setup guide](docs/midea-setup.md): install the phone app, pair your
+  AC and sign in once in the panel. It saves the local token/key for you.
 
 Yours isn't listed? See [Add your air conditioner](#add-your-air-conditioner).
 
 ## Requirements
 
 - Omarchy 4.
-- `python3` 3.12 or newer. Nothing else: no Python packages, no root, nothing system-wide.
+- `python3` 3.12 or newer. Midea additionally uses the optional `msmart-ng` package;
+  `./install.sh --midea` installs it privately. No root or system-wide packages needed.
 - A supported air conditioner on your home network.
 
 It runs a small background service (`aircond`, a systemd user service) and adds the `aircon`
@@ -42,8 +46,10 @@ Then click the new icon in the bar:
 
 1. **Finish install**: sets up the small background service (a few seconds, no password) and
    asks whether to add quick actions to the Omarchy menu.
-2. **Find your air conditioner**: the panel looks for it on your network; pick yours and give
-   it a name. Use **+ Add** for more rooms.
+2. **Find your air conditioner**: choose Midea or Haier, pick your unit and give it a name.
+   For Midea V3, enter your SmartHome email/password and choose **Sign in and add**.
+   Only the verified local token/key is saved; the account password is discarded.
+   You can also use an existing token/key file. Use **+ Add** for more rooms.
 
 To update later: `omarchy plugin update io.github.seromenho.aircon`. The widget picks up the
 new version by itself.
@@ -87,6 +93,7 @@ Got it working? A pull request is very welcome.
 ## More
 
 - [Reference](docs/reference.md): command line, configuration file, socket API, how it works.
+- [Midea setup](docs/midea-setup.md): SmartHome app, account, pairing and local credentials.
 - [AGENTS.md](AGENTS.md): how the code is organised and the rules for contributing.
 
 ## Credits

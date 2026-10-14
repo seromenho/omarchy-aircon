@@ -144,7 +144,7 @@ async def test_cli_discover_json(dongle, capsys):
 
 def test_wizard_with_nothing_found(monkeypatch, capsys):
     monkeypatch.setattr(setup, "default_subnets", lambda: [])
-    assert main(["setup", "--no-restart"]) == 1
+    assert main(["setup", "--backend", "haier_smartair2", "--no-restart"]) == 1
     assert "No air conditioner answered" in capsys.readouterr().out
 
 
@@ -205,7 +205,7 @@ def test_wizard_skips_configured_units(monkeypatch, capsys, tmp_path):
         return [candidate]
 
     monkeypatch.setattr(setup, "discover", fake_discover)
-    assert main(["setup", "--no-restart"]) == 1
+    assert main(["setup", "--backend", "haier_smartair2", "--no-restart"]) == 1
     assert "already added" in capsys.readouterr().out
 
 

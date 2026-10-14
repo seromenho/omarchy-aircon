@@ -15,8 +15,15 @@ def _haier_smartair2(device: DeviceConfig) -> Backend:
     return HaierSmartAir2Backend(device)
 
 
+def _midea_lan(device: DeviceConfig) -> Backend:
+    from aircon.backends.midea_lan.backend import MideaLANBackend
+
+    return MideaLANBackend(device)
+
+
 BACKENDS = {
     "haier_smartair2": _haier_smartair2,
+    "midea_lan": _midea_lan,
 }
 
 

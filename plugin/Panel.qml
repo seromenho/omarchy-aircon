@@ -71,13 +71,17 @@ Panel {
     return (keys[0] === "on" ? "On at " : "Off at ") + clock(ac.timers[keys[0]])
   }
 
-  function finishInstall() {
-    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", ac.installScript])
+  function finishInstall(midea) {
+    var command = "'" + ac.installScript.replace(/'/g, "'\\''") + "'"
+    if (midea) command += " --midea"
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", command])
     root.close()
   }
 
   function launchSetup() {
-    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", ac.cli + " setup"])
+    var command = ac.cli + " setup"
+    if (ac.setupBackend !== "") command += " --backend " + ac.setupBackend
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", command])
     root.close()
   }
 
@@ -94,6 +98,8 @@ Panel {
     timerOpen = false
     if (view === "settings") view = "device"
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  } else {
+    setupView.clearPassword()
   }
 
   Service { id: ac }
@@ -149,10 +155,11 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: root.showSetup && setupView.editing
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
-        if (!ac.connected) return
+        if (root.showSetup || !ac.connected) return
         if (t === "+" || t === "=") root.setTemp(ac.targetTemp + 1)
         else if (t === "-") root.setTemp(ac.targetTemp - 1)
         else if (t === "p" || t === "P") ac.run(["toggle"], { power: !ac.power })
@@ -715,6 +722,7 @@ Panel {
 
           // -- setup (first run and "Add") -----------------------------------------
           SetupView {
+            id: setupView
             width: parent.width
             visible: root.showSetup
             ac: root.service
@@ -724,6 +732,7 @@ Panel {
             fontFamily: root.fontFamily
             onFinished: root.view = "device"
             onTerminalRequested: root.launchSetup()
+            onMideaInstallRequested: root.finishInstall(true)
           }
 
           // -- footer -------------------------------------------------------------

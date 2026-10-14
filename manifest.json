@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.seromenho.aircon",
   "name": "Air Conditioner",
-  "version": "0.3.0",
+  "version": "0.4.2",
   "author": "seromenho",
   "license": "MIT",
-  "description": "Control your air conditioners from the bar, locally, with no cloud. Haier SmartAir2 first; pluggable backends for other brands.",
+  "description": "Control Midea and Haier air conditioners from the bar over your local network.",
   "kinds": [
     "bar-widget"
   ],

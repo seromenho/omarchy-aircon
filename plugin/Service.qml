@@ -14,14 +14,25 @@ Item {
   }
 
   // Keep in sync with manifest.json and src/aircon/__init__.py (a test checks this).
-  readonly property string pluginVersion: "0.3.0"
+  readonly property string pluginVersion: "0.4.2"
   readonly property string installScript:
     Qt.resolvedUrl("../install.sh").toString().replace(/^file:\/\//, "")
 
   // False until the commands and the user service exist (right after `omarchy plugin add`).
   property bool installed: true
   // The daemon still runs older code after `omarchy plugin update`: refresh it once.
-  readonly property bool outdated: serviceUp && snapshot.version !== pluginVersion
+  readonly property bool outdated: serviceUp && daemonNeedsUpdate(snapshot.version)
+  function daemonNeedsUpdate(version) {
+    // A cached widget can briefly see a newer daemon during an update. Only
+    // upgrade older daemons, so a version difference cannot cause restart loops.
+    if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) return false
+    var actual = version.split(".").map(Number)
+    var expected = pluginVersion.split(".").map(Number)
+    for (var i = 0; i < expected.length; i++) {
+      if (actual[i] !== expected[i]) return actual[i] < expected[i]
+    }
+    return false
+  }
   property bool _updateTried: false
   onOutdatedChanged: {
     if (!outdated || _updateTried) return
@@ -179,46 +190,70 @@ Item {
   // -- in-panel setup ---------------------------------------------------------------------
 
   property bool discovering: false
+  property string setupBackend: ""
   property bool discovered: false
   property var candidates: []
   property bool saving: false
   property string setupError: ""
   property string savedId: ""
+  property string _saveInput: ""
+
+  function openMideaGuide() {
+    Qt.openUrlExternally(Qt.resolvedUrl("../docs/midea-setup.md"))
+  }
 
   function discover() {
-    if (discoverProcess.running) return
+    if (discoverProcess.running || setupBackend === "") return
     discovering = true
     discovered = false
     candidates = []
     setupError = ""
-    _discoverDone = { exited: false, output: false }
-    discoverProcess.command = [root.cli, "setup", "discover", "--json"]
+    _discoverDone = { exited: false, output: false, error: false, code: 0 }
+    discoverProcess.command = [root.cli, "setup", "discover", "--backend=" + setupBackend, "--json"]
     discoverProcess.running = true
   }
 
-  function addDevice(hostAddress, mac, name, validate) {
+  function addDevice(hostAddress, mac, name, validate, midea) {
     if (saveProcess.running) return
     saving = true
     setupError = ""
     savedId = ""
-    _saveDone = { exited: false, output: false, code: 0 }
+    _saveDone = { exited: false, output: false, error: false, code: 0 }
+    _saveInput = ""
     // --opt=value keeps values that start with "-" from being read as options.
-    var args = [root.cli, "setup", "apply", "--host=" + hostAddress, "--mac=" + mac,
+    var args = [root.cli, "setup", "apply", "--backend=" + setupBackend, "--host=" + hostAddress,
                 "--name=" + name, "--json"]
-    if (validate) args.push("--validate")
+    if (setupBackend === "midea_lan") {
+      args.push("--device-id=" + midea.deviceId, "--protocol-version=" + midea.version)
+      if (midea.port) args.push("--port=" + midea.port)
+      if (midea.optionsFile) args.push("--options-file=" + midea.optionsFile)
+      if (midea.credentials) {
+        args.push("--smarthome", "--credentials-stdin")
+        _saveInput = JSON.stringify(midea.credentials)
+      }
+    } else {
+      args.push("--mac=" + mac)
+      if (validate) args.push("--validate")
+    }
     saveProcess.command = args
+    saveProcess.stdinEnabled = true
     saveProcess.running = true
   }
 
   // A Process can report its exit before its output stream is drained, so each run
   // finishes only once both have happened.
-  property var _discoverDone: ({ exited: false, output: false })
-  property var _saveDone: ({ exited: false, output: false, code: 0 })
+  property var _discoverDone: ({ exited: false, output: false, error: false, code: 0 })
+  property var _saveDone: ({ exited: false, output: false, error: false, code: 0 })
 
   function _finishDiscover() {
-    if (!_discoverDone.exited || !_discoverDone.output) return
+    if (!_discoverDone.exited || !_discoverDone.output || !_discoverDone.error) return
     discovering = false
     discovered = true
+    if (_discoverDone.code !== 0) {
+      candidates = []
+      setupError = String(discoverStderr.text || "").trim() || "Could not search the network"
+      return
+    }
     try {
       candidates = JSON.parse(String(discoverStdout.text || "[]"))
     } catch (e) {
@@ -228,7 +263,7 @@ Item {
   }
 
   function _finishSave() {
-    if (!_saveDone.exited || !_saveDone.output) return
+    if (!_saveDone.exited || !_saveDone.output || !_saveDone.error) return
     saving = false
     var result = null
     try { result = JSON.parse(String(saveStdout.text || "")) } catch (e) {}
@@ -250,19 +285,39 @@ Item {
       waitForEnd: true
       onStreamFinished: { root._discoverDone.output = true; root._finishDiscover() }
     }
-    onExited: function(exitCode) { root._discoverDone.exited = true; root._finishDiscover() }
+    stderr: StdioCollector {
+      id: discoverStderr
+      waitForEnd: true
+      onStreamFinished: { root._discoverDone.error = true; root._finishDiscover() }
+    }
+    onExited: function(exitCode) {
+      root._discoverDone.code = exitCode
+      root._discoverDone.exited = true
+      root._finishDiscover()
+    }
   }
 
   Process {
     id: saveProcess
     running: false
     command: []
+    stdinEnabled: true
+    onStarted: {
+      if (root._saveInput !== "") write(root._saveInput + "\n")
+      root._saveInput = ""
+      stdinEnabled = false
+    }
+    onRunningChanged: if (!running) root._saveInput = ""
     stdout: StdioCollector {
       id: saveStdout
       waitForEnd: true
       onStreamFinished: { root._saveDone.output = true; root._finishSave() }
     }
-    stderr: StdioCollector { id: saveStderr; waitForEnd: true }
+    stderr: StdioCollector {
+      id: saveStderr
+      waitForEnd: true
+      onStreamFinished: { root._saveDone.error = true; root._finishSave() }
+    }
     onExited: function(exitCode) {
       root._saveDone.code = exitCode
       root._saveDone.exited = true
