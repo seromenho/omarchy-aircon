@@ -15,7 +15,7 @@ END = "  // <<< aircon"
 LEGACY_HEADER = "// Air conditioner (added by aircon/install.sh)"
 
 CLI = "$HOME/.local/bin/aircon"
-OPEN_PANEL = "omarchy-shell shell toggle aircon"
+OPEN_PANEL = "omarchy-shell shell toggle io.github.seromenho.aircon"
 
 SNOWFLAKE = ""
 SUN = ""
@@ -118,6 +118,15 @@ def _strip_ours(text: str) -> str:
         in_legacy = False
         kept.append(line)
     return "\n".join(kept)
+
+
+def is_installed(path: Path) -> bool:
+    """True if the menu file already has aircon entries (the user opted in)."""
+    if not path.exists():
+        return False
+    text = path.read_text()
+    return bool(_MANAGED.search(text)) or any(
+        line.strip().startswith(LEGACY_HEADER) for line in text.split("\n"))
 
 
 def sync(path: Path, config: Config | None) -> bool:

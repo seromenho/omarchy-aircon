@@ -7,8 +7,8 @@ import qs.Ui
 
 Panel {
   id: root
-  moduleName: "aircon"
-  ipcTarget: "aircon"
+  moduleName: "io.github.seromenho.aircon"
+  ipcTarget: "io.github.seromenho.aircon"
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent

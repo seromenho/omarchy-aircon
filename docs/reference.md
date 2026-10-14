@@ -34,33 +34,60 @@ The repository is an Omarchy plugin, so the usual way is:
 omarchy plugin add https://github.com/seromenho/omarchy-aircon --enable
 ```
 
-`omarchy plugin add` clones the repository into `~/.config/omarchy/plugins/aircon/` and enables
-the bar widget, but it does not run install scripts. Until the rest is installed the widget
-shows a download icon, and its panel offers **Finish install**, which runs the plugin's own
-`install.sh` in a floating terminal. That script:
+`omarchy plugin add` clones the repository into
+`~/.config/omarchy/plugins/io.github.seromenho.aircon/` and enables the bar widget, but it does
+not run install scripts. Until the rest is installed the widget shows a download icon, and its
+panel offers **Finish install**, which runs the plugin's own `install.sh` in a floating
+terminal. That script:
 
 1. writes two small wrappers, `~/.local/bin/aircon` and `~/.local/bin/aircond`, that run the
    code from the plugin folder with `python3`;
 2. installs, enables and (re)starts the `aircond` systemd user service;
 3. makes sure the widget is enabled on the right side of the bar;
-4. writes the "Air Conditioner" entries into a marked block of
-   `~/.config/omarchy/extensions/omarchy-menu.jsonc` (`aircon menu sync`; the original file is
-   kept as `omarchy-menu.jsonc.aircon.bak`).
+4. asks whether to add the "Air Conditioner" entries to the Omarchy menu. They go into a marked
+   block of `~/.config/omarchy/extensions/omarchy-menu.jsonc` (`aircon menu sync`; the original
+   file is kept as `omarchy-menu.jsonc.aircon.bak`).
 
-It is safe to re-run. It also replaces installs from versions before 0.2 (installed with
-`uv tool`, or as a `<user>.aircon` plugin).
+The menu file is yours, so it is only changed with your consent:
+
+- `install.sh --menu` adds the entries and `install.sh --no-menu` removes them, without asking;
+- without either flag, an install in a terminal asks, and a non-interactive one leaves the file
+  alone and prints how to add them later (`aircon menu sync`);
+- entries that are already there are kept up to date by `install.sh --update`, setup, rename and
+  remove; when they are not there, nothing adds them;
+- `aircon menu status` tells whether they are there, `aircon menu remove` drops them.
+
+It is safe to re-run. It also replaces installs from earlier versions (installed with
+`uv tool`, or as an `aircon` or `<user>.aircon` plugin): it turns the old widget off, moves the
+old folder away and enables the new one. Only folders whose manifest is named "Air Conditioner"
+are touched.
 
 **Without `omarchy plugin add`:** clone the repository anywhere and run `./install.sh`; it
 copies the code into the plugin folder first and then does the same steps.
 
-**Updating:** `omarchy plugin update aircon` pulls the new code. The widget notices that the
-running service reports an older version and runs `install.sh --update` once by itself.
+**Updating:** `omarchy plugin update io.github.seromenho.aircon` pulls the new code. The widget
+notices that the running service reports an older version and runs `install.sh --update` once
+by itself.
+
+**Upgrading from 0.2:** the plugin id changed from `aircon` to `io.github.seromenho.aircon` in
+0.3 (ids in the plugin marketplace are namespaced). The old widget cannot update itself across
+the rename, so run once:
+
+```bash
+omarchy plugin update aircon                                 # pulls 0.3 into the old folder
+~/.config/omarchy/plugins/aircon/install.sh --update         # moves it to the new id
+```
+
+If you installed from a clone with `./install.sh`, pull the clone and run `./install.sh`
+instead. Keybindings that call `omarchy-shell shell toggle aircon` need the new id (see below).
 
 **Uninstalling:**
 
 ```bash
-~/.config/omarchy/plugins/aircon/install.sh --uninstall   # service, commands, menu entries
-omarchy plugin remove aircon                              # the widget and the code
+# the service, the commands and the menu entries
+~/.config/omarchy/plugins/io.github.seromenho.aircon/install.sh --uninstall
+# the widget and the code
+omarchy plugin remove io.github.seromenho.aircon
 ```
 
 Your configuration in `~/.config/aircon/` and state in `~/.local/state/aircon/` are kept.
@@ -98,7 +125,7 @@ aircon filter reset
 aircon setup
 aircon devices | rename ID NAME | remove ID
 aircon all on|off
-aircon menu sync
+aircon menu sync | remove | status
 aircon watch            # JSON lines, used by the plugin
 aircon is-on            # exit status only
 ```
@@ -146,8 +173,8 @@ options = { }                   # backend-specific settings (keys, tokens, …)
 threshold_hours = 300
 ```
 
-After editing by hand run `aircon menu sync` and `systemctl --user restart aircond`. If the file
-has a mistake, the panel says so instead of showing your units.
+After editing by hand run `systemctl --user restart aircond` (and `aircon menu sync` if you use
+the menu entries). If the file has a mistake, the panel says so instead of showing your units.
 
 Good to know:
 
@@ -165,7 +192,7 @@ temperature. Inside the panel, `+`/`-` change the temperature and `p` toggles po
 To open the panel with a key, add to `~/.config/hypr/bindings.lua`:
 
 ```lua
-o.bind("SUPER + CTRL + A", "Air conditioner", "omarchy-shell shell toggle aircon")
+o.bind("SUPER + CTRL + A", "Air conditioner", "omarchy-shell shell toggle io.github.seromenho.aircon")
 ```
 
 ## How it works
@@ -241,7 +268,7 @@ uv run python tools/haier_probe.py --host <ip> --mac <mac> validate   # changes 
 uv sync
 uv run pytest
 uv run ruff check src tests tools
-omarchy plugin validate ~/.config/omarchy/plugins/aircon   # the installed copy (a dev .venv has symlinks)
+omarchy plugin validate ~/.config/omarchy/plugins/io.github.seromenho.aircon   # the installed copy (a dev .venv has symlinks)
 ```
 
 Tests use an in-process fake of the Haier module (`tests/fake_dongle.py`) and never touch the

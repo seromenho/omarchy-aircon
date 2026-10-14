@@ -153,7 +153,7 @@ def test_mac_is_normalised(tmp_path):
 
 
 def test_odd_characters_survive_a_round_trip(tmp_path):
-    name = "Sala \x7f «estar»"
+    name = "Living \x7f «room»"
     path = tmp_path / "c.toml"
     path.write_text(dump_config(Config(devices=[unit(name)])))
     assert load_config(path).device.name == name

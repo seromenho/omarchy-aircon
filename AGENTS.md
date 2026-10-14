@@ -34,6 +34,7 @@ src/aircon/
   setup_cli.py        `aircon setup`
   menu.py             managed block in the Omarchy menu file
 manifest.json         Omarchy plugin manifest (the repo itself is the plugin)
+preview.png           screenshot for the README and the Omarchy plugin marketplace
 plugin/               Omarchy shell (Quickshell/QML) bar widget, panel and in-panel setup
 install.sh            install / --update / --uninstall (wrappers, systemd unit, menu)
 tests/                pytest suite; tests/fake_dongle.py fakes the Haier module
@@ -51,7 +52,7 @@ The socket protocol and snapshot shape are documented in docs/reference.md ("Soc
 uv sync                              # dev environment
 uv run pytest                        # full test suite (fast, no network, no real device)
 uv run ruff check src tests tools    # lint
-omarchy plugin validate ~/.config/omarchy/plugins/aircon   # the installed copy (a dev .venv has symlinks)
+omarchy plugin validate ~/.config/omarchy/plugins/io.github.seromenho.aircon   # the installed copy (a dev .venv has symlinks)
 ./install.sh                         # install from this clone (copies into the plugin folder)
 ```
 
@@ -70,6 +71,11 @@ omarchy plugin validate ~/.config/omarchy/plugins/aircon   # the installed copy 
   `tools/haier_probe.py`), and every change to a real unit is restored afterwards.
 - **Brand-specific code stays inside its backend.** The model, daemon, CLI, menu and plugin
   must keep working for every backend; they learn what a device supports from `Capabilities`.
+- **The plugin id `io.github.seromenho.aircon` is permanent**: it is how the Omarchy plugin
+  marketplace, `shell.json`, the menu entries and keybindings find the plugin. Never change it.
+- **The Omarchy menu file belongs to the user.** Only `aircon menu sync`, `install.sh --menu`
+  or a yes to the install question may add our entries; everything else only refreshes
+  entries that are already there (`menu.is_installed`).
 - **Plugin**: no hard-coded colors (use `Color.*`, `bar.*` or `AcPalette`), strings in
   English, no symlinks in the plugin folder.
 - **Releases:** bump the version in `manifest.json`, `pyproject.toml`,
@@ -85,4 +91,7 @@ omarchy plugin validate ~/.config/omarchy/plugins/aircon   # the installed copy 
   id defined in `Panel.qml` (see the `actions` object).
 - The shell caches QML components. After changing plugin files run `./install.sh` and then
   `omarchy restart shell`; `rescanPlugins` alone may keep the old code.
+- If the installed plugin folder is a git clone made by `omarchy plugin add`, `./install.sh`
+  runs that clone's own script and your local changes are not copied. Run
+  `omarchy plugin remove io.github.seromenho.aircon` first to test a working copy.
 - Shell logs: `/run/user/$UID/quickshell/by-id/<instance>/log.log`.
