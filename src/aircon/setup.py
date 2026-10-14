@@ -184,7 +184,9 @@ async def discover_midea(hosts: Iterable[str] | None = None,
             allowed = set(local_hosts)
             neighbors = [host for host in read_arp() if host in allowed]
             if neighbors:
-                retry = await protocol.discover_unicast(neighbors)
+                # Use the library's repeated per-host requests on separate sockets:
+                # shared UDP flows to many peers can still lose replies under UFW.
+                retry = await protocol.discover(neighbors, timeout=1.5)
                 by_id = {item["options"]["device_id"]: item for item in items + retry}
                 items = list(by_id.values())
     return [Candidate(host=item["host"], mac=None, state=None, port=item["port"],

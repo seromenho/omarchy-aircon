@@ -297,7 +297,7 @@ answers the broadcast, setup also sends direct discovery requests to hosts on th
 networks carrying the default route (at most 1024 hosts per network). This handles firewalls
 such as UFW that drop broadcast replies but accept responses to direct requests. No firewall
 changes are needed. It then retries known local neighbors to recover replies lost while the
-router resolves new addresses; allow about 15 seconds for the complete search.
+router resolves new addresses; allow about 15–30 seconds for the complete search.
 Discovery explicitly disables
 automatic connection: it sends only local discovery requests, never contacts the cloud,
 authenticates or changes settings. Choose **Midea / NetHome Plus** in the panel's **+ Add**

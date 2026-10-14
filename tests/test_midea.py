@@ -283,15 +283,20 @@ async def test_empty_broadcast_falls_back_to_local_hosts(monkeypatch):
 async def test_fallback_retries_neighbors_and_merges(monkeypatch):
     import ipaddress
 
-    async def empty(hosts):
-        return []
-
     calls = []
+
+    async def empty(hosts, **kwargs):
+        if hosts is None:
+            return []
+        calls.append(list(hosts))
+        assert kwargs["timeout"] == 1.5
+        return [{"host": "192.168.1.51", "port": 6444,
+                 "options": {"device_id": "124", "protocol_version": 3}}]
 
     async def unicast(hosts):
         calls.append(list(hosts))
-        return [{"host": "192.168.1.50" if len(calls) == 1 else "192.168.1.51", "port": 6444,
-                 "options": {"device_id": str(122 + len(calls)), "protocol_version": 3}}]
+        return [{"host": "192.168.1.50", "port": 6444,
+                 "options": {"device_id": "123", "protocol_version": 3}}]
 
     monkeypatch.setattr(p, "discover", empty)
     monkeypatch.setattr(p, "discover_unicast", unicast)
