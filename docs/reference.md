@@ -270,12 +270,19 @@ uv run python tools/haier_probe.py --host <ip> --mac <mac> validate   # changes 
 
 The `midea_lan` backend uses the optional
 [msmart-ng library](https://github.com/mill1000/midea-msmart) to control residential Midea
-ACs (device type `0xAC`) over the LAN. NetHome Plus and Midea Air Wi-Fi modules using V2 or
+ACs (device type `0xAC`) over the LAN. SmartHome, NetHome Plus and Midea Air Wi-Fi modules using V2 or
 V3 are supported by the library. V1, commercial `0xCC` units and Tuya-based modules are not
-handled by this backend. This integration has been tested with offline fakes and the
-library API, **not on a real Midea unit**.
+handled by this backend. SmartHome token retrieval and LAN authentication have been verified
+on a real V3 unit; controls and optional features are covered by offline fakes and library tests.
+The backend suppresses the library's transport INFO/DEBUG logs, which can contain negotiated
+session keys, and honors shutdown even when a library read swallows cancellation.
+The widget upgrades an older daemon only; a newer daemon seen by a cached widget does not
+trigger repeated service restarts.
+The installed CLI and daemon disable Python bytecode writes in the watched plugin folder,
+so first-time imports during sign-in cannot reload the panel and interrupt setup.
 
-Pair the unit with NetHome Plus first and reserve its address in your router. Install from
+Follow the [Midea setup guide](midea-setup.md) to install SmartHome, create an account and pair
+the AC. Reserve its address in your router. Install from
 the clone containing this backend:
 
 ```bash
@@ -285,24 +292,25 @@ aircon setup discover --backend midea_lan --json
 aircon setup discover --backend midea_lan --hosts 192.168.1.50
 ```
 
-`--midea` installs `msmart-ng` in `${XDG_DATA_HOME:-~/.local/share}/aircon/midea-venv/` using
+`--midea` installs `msmart-ng>=2026.9.0,<2027` in
+`${XDG_DATA_HOME:-~/.local/share}/aircon/midea-venv/` using
 `uv`, or Python's `venv` and `pip` if `uv` is unavailable. Both installed commands use that
 environment when present. It lives outside the plugin folder, survives plugin updates and
 is kept during uninstall. Remove it manually for a clean uninstall. Other backends do not
 need this dependency. For development use `uv sync --extra midea` and
 `uv run --extra midea python -m aircon.cli ...`.
 
-Discovery returns the address, device ID and protocol version. When no supported device
-answers the broadcast, setup also sends direct discovery requests to hosts on the local
+Discovery returns the address, device ID and protocol version. Setup checks broadcast and
+saved addresses, then also sends direct discovery requests to hosts on the local
 networks carrying the default route (at most 1024 hosts per network). This handles firewalls
 such as UFW that drop broadcast replies but accept responses to direct requests. No firewall
 changes are needed. It then retries known local neighbors to recover replies lost while the
 router resolves new addresses; allow about 15–30 seconds for the complete search.
 Discovery explicitly disables
 automatic connection: it sends only local discovery requests, never contacts the cloud,
-authenticates or changes settings. Choose **Midea / NetHome Plus** in the panel's **+ Add**
-wizard, or run `aircon setup --backend midea_lan`. V3 setup asks for the path to your private
-credentials file, with `~` supported. Configured Midea units use the normal
+authenticates or changes settings. Choose **Midea / SmartHome** in the panel's **+ Add**
+wizard, or run `aircon setup --backend midea_lan`. V3 setup offers a one-time SmartHome sign-in
+or an existing private credentials file, with `~` supported. Configured Midea units use the normal
 panel, timers, sleep curve and menu.
 
 For a known device, save optional discovery preferences in `~/.config/aircon/setup.toml`:
@@ -312,10 +320,11 @@ backend = "midea_lan"
 hosts = ["192.168.1.50"]
 ```
 
-The panel and `aircon setup discover` then probe that address directly, which is more reliable
-on networks that lose broadcast or subnet-wide replies. Explicit `--hosts` overrides this
-preference; remove the `hosts` line to search the full local network again. This file does
-not configure control of the AC and never holds credentials.
+The panel and `aircon setup discover` use these addresses as extra search hints, together with
+the addresses of configured ACs. They still search the rest of the network for new devices,
+even if a known device answers first. Results are merged and marked already added by stable
+device ID, not IP address. Explicit CLI `--hosts` restricts a search to those addresses.
+This file does not configure control of the AC and never holds credentials.
 
 V2 needs only the device ID:
 
@@ -324,15 +333,30 @@ aircon setup apply --backend midea_lan --host 192.168.1.50 \
   --device-id 123456789 --protocol-version 2 --name "Living room"
 ```
 
-V3 additionally needs a token and key. Obtain those once using the upstream `msmart-ng`
-discovery tool (`msmart-ng discover --help` for account/region options, then
-`msmart-ng discover 192.168.1.50` for a known address). The installer puts that executable in the environment's `bin/`
-directory. **That upstream command can contact Midea's cloud** to obtain credentials;
-aircon itself never does. Keep the output private and save the successful token/key for
-future use without internet access. If the module is paired again, new credentials may be
-needed.
+V3 additionally needs a token and key. The panel's **Sign in and add** action obtains them
+from SmartHome and verifies them with a LAN authentication before saving the device:
 
-Put the values in a private TOML file outside the clone, for example
+```sh
+aircon setup apply --backend midea_lan --host 192.168.1.50 \
+  --device-id 123456789 --protocol-version 3 --smarthome --name "Living room"
+```
+
+This command prompts for a SmartHome email/password and never saves them. For the panel,
+`--smarthome --credentials-stdin` reads one bounded JSON line containing `email` and `password`
+over a pipe, so neither secret appears in process arguments or a temporary file. Only an
+explicit sign-in action contacts the cloud. The daemon and ordinary discovery never do.
+The backend tries both device-ID byte orders, supplies the appliance ID required by SmartHome,
+closes authentication connections, and sanitizes library errors. It does not send AC settings.
+Setup has a 120-second timeout. Failure does not modify the existing config.
+
+Existing NetHome Plus tokens still work. For new credentials use a fresh SmartHome account
+with the AC added directly; the [Midea AC LAN maintainers](https://github.com/wuwentao/midea_ac_lan#important-notice)
+report that NetHome Plus token retrieval is currently unavailable and migrated accounts may
+fail. The `msmart-ng discover` command uses NetHome Plus and is not the SmartHome sign-in flow.
+Re-pairing the module may require new credentials.
+
+To import credentials you already have, put the values in a private TOML file outside the clone,
+for example
 `~/.config/aircon/midea-options.toml` (run `chmod 600` on it):
 
 ```toml
@@ -350,7 +374,7 @@ aircon setup apply --backend midea_lan --host 192.168.1.50 \
 aircon status
 ```
 
-`setup apply` validates and saves these settings without probing the unit; the restarted
+`setup apply --options-file` validates and saves these settings without probing the unit; the restarted
 daemon connects in the background. Use `--no-restart` to save without connecting. The config
 and its backups are written with owner-only permissions. Setup output and daemon snapshots
 never include tokens or keys. Re-adding the same device ID updates it and preserves existing

@@ -1,6 +1,7 @@
 import asyncio
 import builtins
 import json
+import logging
 import stat
 import sys
 from types import SimpleNamespace
@@ -181,6 +182,40 @@ async def test_failing_listener_and_repeated_start(backend):
     assert b.connected
 
 
+@pytest.mark.parametrize("stage", ["authenticate", "get_capabilities", "refresh"])
+async def test_shutdown_survives_library_swallowing_cancellation(monkeypatch, stage):
+    fake = FakeMidea()
+    entered = asyncio.Event()
+
+    async def swallow(*args):
+        entered.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            # Mirrors msmart-ng converting a cancelled read into a timeout/reply.
+            return
+
+    monkeypatch.setattr(fake, stage, swallow)
+    monkeypatch.setattr(p, "create_client", lambda *_: fake)
+    b = MideaLANBackend(device(options={"device_id": "123", "protocol_version": 3,
+                                       "token": "01" * 64, "key": "02" * 32}))
+    await b.start()
+    await asyncio.wait_for(entered.wait(), 1)
+    await asyncio.wait_for(b.close(), 0.2)
+    assert b._task is None and b._client is None and not b.connected
+    assert fake.closed == 1 and not fake.online
+
+
+def test_runtime_transport_never_logs_session_keys(caplog):
+    MideaLANBackend(device())
+    caplog.set_level(logging.DEBUG)
+    logger = logging.getLogger("msmart.lan")
+    logger.info("Authentication successful. Local key: example-secret-key")
+    logger.warning("Example transport timeout")
+    assert "example-secret-key" not in caplog.text
+    assert "Example transport timeout" in caplog.text
+
+
 def test_percent_fan_unknown_room_and_error():
     fake = FakeMidea()
     fake.fan_speed = 55
@@ -313,7 +348,7 @@ def test_plain_setup_asks_for_brand_and_uses_midea(monkeypatch, capsys):
     monkeypatch.setattr(setup_cli, "_ask", lambda *args: "1")
     seen = []
 
-    async def empty(hosts, configured_ids):
+    async def empty(hosts, configured_ids, **kwargs):
         seen.append(hosts)
         return []
 
@@ -334,7 +369,7 @@ def test_midea_wizard_adds_without_haier_prompts(tmp_path, monkeypatch, capsys, 
     config = tmp_path / "config.toml"
     credentials = tmp_path / "options.toml"
     credentials.write_text(f'token = "{"01" * 64}"\nkey = "{"02" * 32}"\n')
-    answers = iter(["1", "Bedroom", str(credentials)])
+    answers = iter(["1", "Bedroom", "2", str(credentials)])
     monkeypatch.setattr(setup_cli, "_ask", lambda *args: next(answers))
     candidate = setup.Candidate(host="192.168.1.50", mac=None, state=None, port=6444,
                                 backend="midea_lan",
@@ -385,14 +420,15 @@ async def test_unicast_discovery_decodes_fake_udp_reply(monkeypatch):
         transport.close()
 
 
-def test_saved_discovery_address_and_explicit_override(tmp_path, monkeypatch, capsys):
+def test_saved_discovery_addresses_are_hints_and_explicit_hosts_can_restrict(
+        tmp_path, monkeypatch, capsys):
     config = tmp_path / "config.toml"
     config.with_name("setup.toml").write_text('backend = "midea_lan"\nhosts = ["192.168.1.50"]\n')
     seen = []
 
-    async def discover(hosts, configured_ids):
-        seen.append(hosts)
-        return [setup.Candidate(host=hosts[0], port=6444, mac=None, state=None,
+    async def discover(hosts, configured_ids, *, known_hosts=()):
+        seen.append((hosts, known_hosts))
+        return [setup.Candidate(host=(hosts or known_hosts)[0], port=6444, mac=None, state=None,
                                 backend="midea_lan",
                                 options={"device_id": "123", "protocol_version": 3})]
 
@@ -402,4 +438,61 @@ def test_saved_discovery_address_and_explicit_override(tmp_path, monkeypatch, ca
     assert cli.main(["setup", "discover", "--config", str(config), "--json",
                      "--hosts", "192.168.1.51"]) == 0
     assert json.loads(capsys.readouterr().out)[0]["host"] == "192.168.1.51"
-    assert seen == [["192.168.1.50"], ["192.168.1.51"]]
+    assert seen == [(None, ["192.168.1.50"]), (["192.168.1.51"], [])]
+
+
+async def test_discovery_keeps_saved_devices_and_finds_new_devices_elsewhere(monkeypatch):
+    import ipaddress
+
+    calls = []
+    first = {"host": "192.168.1.50", "port": 6444,
+             "options": {"device_id": "123", "protocol_version": 3}}
+    new = {"host": "192.168.1.60", "port": 6444,
+           "options": {"device_id": "456", "protocol_version": 3}}
+
+    async def discover(hosts):
+        calls.append(("direct", hosts))
+        return [first]
+
+    async def sweep(hosts):
+        calls.append(("sweep", hosts))
+        return [first, new]
+
+    monkeypatch.setattr(p, "discover", discover)
+    monkeypatch.setattr(p, "discover_unicast", sweep)
+    monkeypatch.setattr(setup, "default_subnets",
+                        lambda: [ipaddress.ip_network("192.168.1.0/24")])
+    monkeypatch.setattr(setup, "read_arp", lambda: {})
+    found = await setup.discover_midea(configured_ids=["123"], known_hosts=["192.168.1.50"])
+    assert len(found) == 2
+    assert [(c.options["device_id"], c.configured) for c in found] == [
+        ("123", True), ("456", False)]
+    assert calls[0] == ("direct", ["255.255.255.255", "192.168.1.50"])
+    assert calls[1][0] == "sweep" and "192.168.1.60" in calls[1][1]
+
+
+def test_configured_devices_supply_hints_and_stable_ids(monkeypatch, capsys):
+    from aircon.config import default_config_path
+
+    setup.add_device(default_config_path(), name="Existing", host="192.168.1.50",
+                     backend="midea_lan", options={"device_id": "123"})
+    observed = []
+
+    async def discover(hosts, configured_ids, *, known_hosts):
+        observed.append((hosts, configured_ids, known_hosts))
+        return []
+
+    monkeypatch.setattr(setup, "discover_midea", discover)
+    assert cli.main(["setup", "discover", "--backend=midea_lan", "--json"]) == 0
+    assert observed == [(None, ["123"], ["192.168.1.50"])]
+    assert json.loads(capsys.readouterr().out) == []
+
+
+async def test_duplicate_device_id_at_new_address_is_still_already_added(monkeypatch):
+    async def discover(hosts):
+        return [{"host": "192.168.1.60", "port": 6444,
+                 "options": {"device_id": "123", "protocol_version": 3}}]
+
+    monkeypatch.setattr(p, "discover", discover)
+    found = await setup.discover_midea(["192.168.1.60"], configured_ids=["123"])
+    assert len(found) == 1 and found[0].configured and found[0].host == "192.168.1.60"

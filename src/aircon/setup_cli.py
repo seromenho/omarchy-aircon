@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
 import json
 import sys
 import tomllib
 from pathlib import Path
 
 from aircon import menu, setup
-from aircon.config import default_config_path
+from aircon.config import DeviceConfig, default_config_path
 
 DEFAULT_NAME = setup.DEFAULT_NAME
 
@@ -24,18 +25,19 @@ Check that:
 If you know its address, run:
   aircon setup apply --backend haier_smartair2 --host <ip> --mac <module MAC>
 
-For Midea / NetHome Plus, choose Midea in setup or run:
+For Midea / SmartHome, choose Midea in setup or run:
   aircon setup --backend midea_lan"""
 
 MIDEA_NOT_FOUND_HELP = """No Midea air conditioner was found on the local network.
 
-Pair the unit with NetHome Plus or Midea Air, and check that it is plugged in
+Pair the unit with SmartHome (formerly MSmartHome), and check that it is plugged in
 and connected to the same network as this computer.
 
 If you know its address, run:
   aircon setup discover --backend midea_lan --hosts <ip>
 
-V3 units also need a local token/key file when adding them."""
+V3 setup can sign in to SmartHome once to retrieve its local token/key.
+See docs/midea-setup.md for pairing and account instructions."""
 
 FEATURE_WARNING = (
     "Test optional features (left/right swing, health, sleep)?\n"
@@ -77,8 +79,13 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     apply.add_argument("--mac", help="Haier Wi-Fi module MAC (required for Haier)")
     apply.add_argument("--device-id", help="Midea numeric device ID")
     apply.add_argument("--protocol-version", type=int, choices=(2, 3))
-    apply.add_argument("--options-file", type=Path,
-                       help="Midea options in a private TOML file (device_id, token, key, etc.)")
+    auth = apply.add_mutually_exclusive_group()
+    auth.add_argument("--options-file", type=Path,
+                      help="Midea options in a private TOML file (device_id, token, key, etc.)")
+    auth.add_argument("--smarthome", action="store_true",
+                      help="sign in to SmartHome once, verify local credentials and add the AC")
+    apply.add_argument("--credentials-stdin", action="store_true",
+                       help="read SmartHome email/password as one JSON line from stdin")
     apply.add_argument("--name", default=None,
                        help=f"name to show (default: keep the current one, or {DEFAULT_NAME!r})")
     apply.add_argument("--validate", action="store_true",
@@ -94,17 +101,20 @@ def run(args: argparse.Namespace) -> int:
             if not hasattr(args, "backend"):
                 args.backend = preferences["backend"]
             if args.backend == preferences["backend"] and not hasattr(args, "hosts"):
-                args.hosts = preferences.get("hosts")
+                if args.backend == "midea_lan":
+                    args.discovery_hints = preferences.get("hosts") or []
+                else:
+                    args.hosts = preferences.get("hosts")
     if command == "discover":
         return _discover(args)
     if command == "apply":
         return _apply(args)
     if not hasattr(args, "backend"):
         if not sys.stdin.isatty():
-            raise ValueError("choose a brand: --backend midea_lan (NetHome Plus / Midea Air) "
+            raise ValueError("choose a brand: --backend midea_lan (SmartHome / Midea) "
                              "or --backend haier_smartair2 (HaierSmartAir2)")
         print("Choose your air conditioner:\n"
-              "  1) Midea — NetHome Plus / Midea Air\n"
+              "  1) Midea — SmartHome / Midea Air\n"
               "  2) Haier — HaierSmartAir2")
         choice = _ask("Brand [1]: ", "1")
         if choice not in ("1", "2"):
@@ -215,10 +225,14 @@ def _report_saved(args: argparse.Namespace, result: dict) -> None:
 
 def _discover_candidates(args: argparse.Namespace) -> list[setup.Candidate]:
     if _opt(args, "backend", setup.DEFAULT_BACKEND) == "midea_lan":
-        ids = [str(d.options.get("device_id"))
-               for d in setup.load_or_empty(config_path(args)).devices if d.backend == "midea_lan"]
+        devices = [d for d in setup.load_or_empty(config_path(args)).devices
+                   if d.backend == "midea_lan"]
+        ids = [str(d.options.get("device_id")) for d in devices]
+        hosts = _opt(args, "hosts", None)
+        hints = (list(_opt(args, "discovery_hints", [])) + [d.host for d in devices]
+                 if hosts is None else [])
         try:
-            return asyncio.run(setup.discover_midea(_opt(args, "hosts", None), ids))
+            return asyncio.run(setup.discover_midea(hosts, ids, known_hosts=hints))
         except RuntimeError as exc:
             raise ValueError(str(exc)) from None
     return asyncio.run(setup.discover(
@@ -244,6 +258,10 @@ def _discover(args: argparse.Namespace) -> int:
 
 
 def _apply(args: argparse.Namespace) -> int:
+    if _opt(args, "credentials_stdin", False) and not _opt(args, "smarthome", False):
+        raise ValueError("--credentials-stdin requires --smarthome")
+    if _opt(args, "smarthome", False) and _opt(args, "backend", "") != "midea_lan":
+        raise ValueError("--smarthome requires --backend midea_lan")
     if _opt(args, "backend", setup.DEFAULT_BACKEND) == "midea_lan":
         return _apply_midea(args)
     if not args.mac:
@@ -278,6 +296,19 @@ def _apply_midea(args: argparse.Namespace) -> int:
         options["device_id"] = args.device_id
     if args.protocol_version is not None:
         options["protocol_version"] = args.protocol_version
+    if _opt(args, "smarthome", False):
+        from aircon.backends.midea_lan.credentials import fetch_credentials
+        from aircon.backends.midea_lan.protocol import settings
+
+        if args.protocol_version not in (None, 3):
+            raise ValueError("SmartHome sign-in is only needed for Midea V3 units")
+        # Validate the selected device before asking for or reading account credentials.
+        settings(DeviceConfig(name="Midea setup", backend="midea_lan", host=args.host,
+                              port=_port(args), options={"device_id": args.device_id or ""}))
+        email, password = _smarthome_login(_opt(args, "credentials_stdin", False))
+        options = asyncio.run(fetch_credentials(args.host, args.device_id, email, password,
+                                                port=_port(args)))
+        del email, password
     device, created = setup.add_device(
         config_path(args), name=args.name, host=args.host,
         port=_opt(args, "port", 6444), backend="midea_lan", options=options,
@@ -292,6 +323,31 @@ def _apply_midea(args: argparse.Namespace) -> int:
         _report_saved(args, result)
         print("Settings saved; aircond will connect in the background. Run: aircon status")
     return 0
+
+
+def _smarthome_login(from_stdin: bool) -> tuple[str, str]:
+    if from_stdin:
+        if sys.stdin.isatty():
+            raise ValueError("--credentials-stdin requires a JSON line from a pipe")
+        line = sys.stdin.readline(16385)
+        try:
+            payload = json.loads(line) if len(line) <= 16384 else None
+        except (ValueError, TypeError):
+            payload = None
+        if not isinstance(payload, dict) or set(payload) != {"email", "password"}:
+            raise ValueError("Expected a JSON object with SmartHome email and password on stdin")
+        email, password = payload["email"], payload["password"]
+    else:
+        if not sys.stdin.isatty():
+            raise ValueError("Use --credentials-stdin for non-interactive SmartHome setup")
+        print("Sign in to SmartHome once to retrieve your AC's local token/key.\n"
+              "Your account password is not saved. The AC must already be added in SmartHome.")
+        email = _ask("SmartHome email: ")
+        password = getpass.getpass("SmartHome password (hidden): ")
+    if (not isinstance(email, str) or not email.strip() or len(email) > 4096
+            or not isinstance(password, str) or not password or len(password) > 4096):
+        raise ValueError("Enter your SmartHome email and password")
+    return email.strip(), password
 
 
 def _wizard(args: argparse.Namespace) -> int:
@@ -361,18 +417,29 @@ def _wizard_midea(args: argparse.Namespace) -> int:
     choice = usable[int(answer) - 1]
     name = _ask(f"Name [{DEFAULT_NAME}]: ", DEFAULT_NAME)
     options_file = None
+    smarthome = False
     if choice.options["protocol_version"] == 3:
-        print("This unit needs its local token/key in a private TOML file.\n"
-              "See docs/reference.md, Midea LAN notes, for how to obtain them.")
-        path = _ask("Token/key file path (leave empty to cancel): ")
-        if not path:
-            print("Nothing changed. Save your credentials file, then run setup again.")
+        print("This unit needs a local token/key.\n"
+              "  1) Sign in to SmartHome (password is not saved)\n"
+              "  2) Use a saved token/key TOML file\n"
+              "See docs/midea-setup.md for pairing and account instructions.")
+        method = _ask("Credentials [1]: ", "1")
+        if method == "1":
+            smarthome = True
+        elif method == "2":
+            path = _ask("Token/key file path (leave empty to cancel): ")
+            if not path:
+                print("Nothing changed.")
+                return 1
+            options_file = Path(path)
+        else:
+            print("Nothing changed.")
             return 1
-        options_file = Path(path)
     apply_args = argparse.Namespace(**{
         **vars(args), "host": choice.host, "port": choice.port, "name": name,
         "device_id": choice.options["device_id"],
         "protocol_version": choice.options["protocol_version"],
-        "options_file": options_file, "validate": False, "json": False,
+        "options_file": options_file, "smarthome": smarthome, "credentials_stdin": False,
+        "validate": False, "json": False,
     })
     return _apply_midea(apply_args)

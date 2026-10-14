@@ -4,7 +4,7 @@ requires-python = ">=3.12"
 
 [[package]]
 name = "aircon"
-version = "0.3.0"
+version = "0.4.2"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -20,7 +20,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "msmart-ng", marker = "extra == 'midea'", specifier = ">=2025.12.0,<2027" }]
+requires-dist = [{ name = "msmart-ng", marker = "extra == 'midea'", specifier = ">=2026.9.0,<2027" }]
 provides-extras = ["midea"]
 
 [package.metadata.requires-dev]

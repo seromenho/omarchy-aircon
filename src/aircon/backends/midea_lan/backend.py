@@ -32,8 +32,11 @@ class MideaLANBackend:
         self._client = None
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
+        self._closing = False
         self._state_callbacks: list[Callable[[State], None]] = []
         self._connection_callbacks: list[Callable[[bool], None]] = []
+        # msmart-ng logs its negotiated session key at INFO, including under --verbose.
+        logging.getLogger("msmart.lan").setLevel(logging.WARNING)
 
     def on_state(self, callback: Callable[[State], None]) -> None:
         self._state_callbacks.append(callback)
@@ -43,9 +46,11 @@ class MideaLANBackend:
 
     async def start(self) -> None:
         if self._task is None:
+            self._closing = False
             self._task = asyncio.create_task(self._run(), name="midea-lan")
 
     async def close(self) -> None:
+        self._closing = True
         if self._task:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -86,7 +91,7 @@ class MideaLANBackend:
 
     async def _run(self) -> None:
         backoff = min(1.0, self.reconnect_max)
-        while True:
+        while not self._closing:
             try:
                 async with self._lock:
                     async with asyncio.timeout(self.timeout):
@@ -95,7 +100,9 @@ class MideaLANBackend:
                             if self.settings.version == 3:
                                 await self._client.authenticate(
                                     self.settings.token, self.settings.key)
+                                self._check_closing()
                             await self._client.get_capabilities()
+                            self._check_closing()
                             self.capabilities = p.capabilities(self._client, self.device.features)
                         await self._refresh()
                         self._publish()
@@ -104,6 +111,8 @@ class MideaLANBackend:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                if self._closing:
+                    break
                 # Both background and public operations release the same client under lock.
                 async with self._lock:
                     self._fail(exc)
@@ -112,7 +121,14 @@ class MideaLANBackend:
 
     async def _refresh(self) -> None:
         await self._client.refresh()
+        self._check_closing()
         self._check_reply()
+
+    def _check_closing(self) -> None:
+        # msmart-ng converts CancelledError into a transport timeout. Do not reconnect
+        # or publish a state if shutdown was requested while the SDK was awaiting I/O.
+        if self._closing:
+            raise asyncio.CancelledError
 
     def _check_reply(self) -> None:
         # msmart-ng can swallow transport errors. No reply must not become a stale success.
