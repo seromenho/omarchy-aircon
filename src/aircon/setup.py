@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import time
+import tomllib
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -33,6 +34,23 @@ MAX_HOSTS = 1024
 ALL_HAIER_FEATURES = ["health", "sleep", "swing_horizontal"]
 DEFAULT_NAME = "Air conditioner"
 KEEP_BACKUPS = 3
+
+
+def discovery_preferences(config_path: Path) -> dict:
+    """Optional local setup preferences; contains addresses, never tokens or keys."""
+    path = config_path.with_name("setup.toml")
+    if not path.exists():
+        return {}
+    with path.open("rb") as fh:
+        preferences = tomllib.load(fh)
+    backend = preferences.get("backend")
+    if backend not in ("midea_lan", "haier_smartair2"):
+        raise ValueError(f"{path}: setup backend must be midea_lan or haier_smartair2")
+    hosts = preferences.get("hosts")
+    if hosts is not None and (not isinstance(hosts, list) or not hosts
+                              or any(not isinstance(h, str) or not h.strip() for h in hosts)):
+        raise ValueError(f"{path}: setup hosts must be a non-empty list of addresses")
+    return preferences
 
 
 # -- network helpers ------------------------------------------------------------------
@@ -186,7 +204,7 @@ async def discover_midea(hosts: Iterable[str] | None = None,
             if neighbors:
                 # Use the library's repeated per-host requests on separate sockets:
                 # shared UDP flows to many peers can still lose replies under UFW.
-                retry = await protocol.discover(neighbors, timeout=1.5)
+                retry = await protocol.discover(neighbors)
                 by_id = {item["options"]["device_id"]: item for item in items + retry}
                 items = list(by_id.values())
     return [Candidate(host=item["host"], mac=None, state=None, port=item["port"],

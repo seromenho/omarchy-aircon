@@ -136,9 +136,18 @@ async def discover(hosts=None, *, timeout: float = 5) -> list[dict]:
     except ImportError:
         raise RuntimeError(DEPENDENCY_HELP) from None
     found: dict[int, dict] = {}
-    # Discover uses class-level settings; run each target sequentially.
-    for target in hosts if hosts is not None else ["255.255.255.255"]:
-        for client in await Discover.discover(target=target, timeout=timeout, auto_connect=False):
+    semaphore = asyncio.Semaphore(16)
+
+    async def probe(target):
+        async with semaphore:
+            # All calls use identical class-level settings and disable authentication.
+            # Each target gets its own socket, avoiding shared-flow reply loss under UFW.
+            return await Discover.discover(target=target, timeout=timeout, auto_connect=False)
+
+    targets = hosts if hosts is not None else ["255.255.255.255"]
+    results = await asyncio.gather(*(probe(target) for target in targets))
+    for clients in results:
+        for client in clients:
             if client.type != 0xAC or client.version not in (2, 3):
                 continue
             found[client.id] = {

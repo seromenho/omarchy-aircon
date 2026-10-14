@@ -88,6 +88,13 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
 
 def run(args: argparse.Namespace) -> int:
     command = getattr(args, "setup_command", None)
+    if command != "apply":
+        preferences = setup.discovery_preferences(config_path(args))
+        if preferences:
+            if not hasattr(args, "backend"):
+                args.backend = preferences["backend"]
+            if args.backend == preferences["backend"] and not hasattr(args, "hosts"):
+                args.hosts = preferences.get("hosts")
     if command == "discover":
         return _discover(args)
     if command == "apply":
@@ -332,7 +339,9 @@ def _wizard(args: argparse.Namespace) -> int:
 
 
 def _wizard_midea(args: argparse.Namespace) -> int:
-    print("Looking for Midea air conditioners on the local network...", flush=True)
+    hosts = _opt(args, "hosts", None)
+    location = ", ".join(hosts) if hosts else "the local network"
+    print(f"Looking for Midea air conditioners on {location}...", flush=True)
     candidates = _discover_candidates(args)
     usable = [c for c in candidates if not c.configured]
     if not usable:

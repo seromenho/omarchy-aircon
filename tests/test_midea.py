@@ -289,7 +289,7 @@ async def test_fallback_retries_neighbors_and_merges(monkeypatch):
         if hosts is None:
             return []
         calls.append(list(hosts))
-        assert kwargs["timeout"] == 1.5
+        assert not kwargs
         return [{"host": "192.168.1.51", "port": 6444,
                  "options": {"device_id": "124", "protocol_version": 3}}]
 
@@ -383,3 +383,23 @@ async def test_unicast_discovery_decodes_fake_udp_reply(monkeypatch):
                           "options": {"device_id": "123", "protocol_version": 3}}]
     finally:
         transport.close()
+
+
+def test_saved_discovery_address_and_explicit_override(tmp_path, monkeypatch, capsys):
+    config = tmp_path / "config.toml"
+    config.with_name("setup.toml").write_text('backend = "midea_lan"\nhosts = ["192.168.1.50"]\n')
+    seen = []
+
+    async def discover(hosts, configured_ids):
+        seen.append(hosts)
+        return [setup.Candidate(host=hosts[0], port=6444, mac=None, state=None,
+                                backend="midea_lan",
+                                options={"device_id": "123", "protocol_version": 3})]
+
+    monkeypatch.setattr(setup, "discover_midea", discover)
+    assert cli.main(["setup", "discover", "--config", str(config), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["host"] == "192.168.1.50"
+    assert cli.main(["setup", "discover", "--config", str(config), "--json",
+                     "--hosts", "192.168.1.51"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["host"] == "192.168.1.51"
+    assert seen == [["192.168.1.50"], ["192.168.1.51"]]

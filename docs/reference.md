@@ -305,6 +305,18 @@ wizard, or run `aircon setup --backend midea_lan`. V3 setup asks for the path to
 credentials file, with `~` supported. Configured Midea units use the normal
 panel, timers, sleep curve and menu.
 
+For a known device, save optional discovery preferences in `~/.config/aircon/setup.toml`:
+
+```toml
+backend = "midea_lan"
+hosts = ["192.168.1.50"]
+```
+
+The panel and `aircon setup discover` then probe that address directly, which is more reliable
+on networks that lose broadcast or subnet-wide replies. Explicit `--hosts` overrides this
+preference; remove the `hosts` line to search the full local network again. This file does
+not configure control of the AC and never holds credentials.
+
 V2 needs only the device ID:
 
 ```bash
