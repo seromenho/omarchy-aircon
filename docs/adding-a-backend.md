@@ -84,6 +84,6 @@ that does not round-trip.
 Work in small commits with clear English messages. Finish with a summary for the user: what
 works, what could not be verified, which capabilities were left disabled, and how to add
 their unit (the panel's **+ Add**, `aircon setup apply`, or a `[[device]]` block with
-`backend = "<backend_name>"` and its `options`, followed by `aircon menu sync` and
-`systemctl --user restart aircond`). Suggest contributing the backend back, without any of
-their addresses or keys.
+`backend = "<backend_name>"` and its `options`, followed by `systemctl --user restart aircond`
+and, if they use the menu entries, `aircon menu sync`). Suggest contributing the backend back,
+without any of their addresses or keys.

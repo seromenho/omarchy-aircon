@@ -219,7 +219,7 @@ def _build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--no-restart", action="store_true", help=argparse.SUPPRESS)
 
     menu_parser = sub.add_parser("menu", help="Omarchy menu entries")
-    menu_parser.add_argument("action", choices=["sync", "remove"])
+    menu_parser.add_argument("action", choices=["sync", "remove", "status"])
 
     setup_cli.add_parser(sub)
     return parser
@@ -266,6 +266,10 @@ def _run(args: argparse.Namespace) -> int:
         return _devices(args)
     if command == "menu":
         path = menu.default_menu_path()
+        if args.action == "status":
+            installed = menu.is_installed(path)
+            print(f"{path}: {'has' if installed else 'no'} aircon entries")
+            return 0 if installed else 1
         if args.action == "remove":
             menu.remove(path)
         else:

@@ -28,7 +28,7 @@ mac = "04FA83A1B2C3"
 
 [[device]]
 id = "bedroom"
-name = "Quarto"
+name = "Bedroom"
 backend = "haier_smartair2"
 host = "192.168.1.51"
 mac = "04FA83000001"
@@ -42,16 +42,16 @@ def write(tmp_path, text):
 
 
 @pytest.mark.parametrize(("name", "slug"), [
-    ("Living room", "living-room"), ("Sala de estar", "sala-de-estar"),
-    ("Escritório", "escritorio"), ("  !!  ", "ac"), ("Quarto 2", "quarto-2"),
+    ("Living room", "living-room"), ("Dining room", "dining-room"),
+    ("Café", "cafe"), ("  !!  ", "ac"), ("Bedroom 2", "bedroom-2"),
 ])
 def test_slugify(name, slug):
     assert slugify(name) == slug
 
 
 def test_unique_id():
-    assert unique_id("sala", []) == "sala"
-    assert unique_id("sala", ["sala", "sala-2"]) == "sala-3"
+    assert unique_id("room", []) == "room"
+    assert unique_id("room", ["room", "room-2"]) == "room-3"
 
 
 def test_legacy_single_table(tmp_path):
@@ -66,7 +66,7 @@ def test_device_list_and_default(tmp_path):
     config = load_config(write(tmp_path, LIST_CONFIG))
     assert [d.id for d in config.devices] == ["living-room", "bedroom"]
     assert config.default_id == "bedroom"
-    assert config.get("bedroom").name == "Quarto"
+    assert config.get("bedroom").name == "Bedroom"
     assert config.get("nope") is None
 
 
@@ -95,11 +95,11 @@ def test_no_devices_is_an_empty_config(tmp_path):
 
 def test_dump_round_trip(tmp_path):
     config = Config(devices=[
-        DeviceConfig(name="Sala de estar", backend="haier_smartair2", host="10.0.0.2",
+        DeviceConfig(name="Dining room", backend="haier_smartair2", host="10.0.0.2",
                      mac="04FA83000002", features=["sleep"]),
-        DeviceConfig(name="Quarto", backend="haier_smartair2", host="10.0.0.3", id="quarto",
+        DeviceConfig(name="Bedroom", backend="haier_smartair2", host="10.0.0.3", id="bedroom",
                      options={"local_key": "abc \"1\"", "version": 3, "secure": True}),
-    ], default="quarto", filter_threshold_hours=250)
+    ], default="bedroom", filter_threshold_hours=250)
     path = write(tmp_path, dump_config(config, "# written by a test"))
     loaded = load_config(path)
     assert loaded == config

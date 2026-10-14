@@ -4,7 +4,7 @@ Control your air conditioner from the [Omarchy](https://omarchy.org/) status bar
 No cloud, no phone app, no hunting for the remote.
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="The aircon widget in the Omarchy bar with its panel open" width="320">
+  <img src="preview.png" alt="The aircon widget in the Omarchy bar with its panel open" width="320">
 </p>
 
 ## What it does
@@ -14,7 +14,7 @@ No cloud, no phone app, no hunting for the remote.
 - Matches your Omarchy theme, and follows it when you switch themes.
 - Talks to the air conditioner directly on your home network.
 - Handles several air conditioners, one tab each.
-- Adds quick actions to the Omarchy menu.
+- Can add quick actions to the Omarchy menu (it asks first).
 
 ## Supported air conditioners
 
@@ -22,6 +22,15 @@ No cloud, no phone app, no hunting for the remote.
   HaierSmartAir2 app).
 
 Yours isn't listed? See [Add your air conditioner](#add-your-air-conditioner).
+
+## Requirements
+
+- Omarchy 4.
+- `python3` 3.12 or newer. Nothing else: no Python packages, no root, nothing system-wide.
+- A supported air conditioner on your home network.
+
+It runs a small background service (`aircond`, a systemd user service) and adds the `aircon`
+and `aircond` commands to `~/.local/bin`.
 
 ## Install
 
@@ -31,14 +40,32 @@ omarchy plugin add https://github.com/seromenho/omarchy-aircon --enable
 
 Then click the new icon in the bar:
 
-1. **Finish install**: sets up the small background service (a few seconds, no password).
+1. **Finish install**: sets up the small background service (a few seconds, no password) and
+   asks whether to add quick actions to the Omarchy menu.
 2. **Find your air conditioner**: the panel looks for it on your network; pick yours and give
    it a name. Use **+ Add** for more rooms.
 
-To update later: `omarchy plugin update aircon`. The widget picks up the new version by itself.
+To update later: `omarchy plugin update io.github.seromenho.aircon`. The widget picks up the
+new version by itself.
+
+> **Installed version 0.2?** The plugin id changed in 0.3, so update by hand once:
+> `omarchy plugin update aircon && ~/.config/omarchy/plugins/aircon/install.sh --update`.
+> (Installed from a clone with `./install.sh`? Pull it and run `./install.sh` again.)
 
 > **Haier:** pair the unit's Wi-Fi module once with the HaierSmartAir2 app first. After that,
 > neither the app nor the internet is needed.
+
+## Uninstall
+
+```bash
+# the service, the commands and the menu entries
+~/.config/omarchy/plugins/io.github.seromenho.aircon/install.sh --uninstall
+# the widget and the code
+omarchy plugin remove io.github.seromenho.aircon
+```
+
+Your settings stay in `~/.config/aircon/` and `~/.local/state/aircon/`; delete those folders
+too for a clean slate.
 
 ## Add your air conditioner
 

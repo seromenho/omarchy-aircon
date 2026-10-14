@@ -89,9 +89,11 @@ def config_path(args: argparse.Namespace) -> Path:
 
 
 def apply_changes(args: argparse.Namespace) -> bool:
-    """Regenerate the menu and restart the daemon after the config changed."""
+    """Refresh the menu entries (only if the user added them) and restart the daemon."""
     try:
-        menu.sync(menu.default_menu_path(), setup.load_or_empty(config_path(args)))
+        path = menu.default_menu_path()
+        if menu.is_installed(path):
+            menu.sync(path, setup.load_or_empty(config_path(args)))
     except (OSError, ValueError) as exc:  # a broken menu file must not block the restart
         print(f"aircon: could not update the Omarchy menu: {exc}")
     if _opt(args, "no_restart", False):

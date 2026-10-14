@@ -43,7 +43,7 @@ def default_socket_path() -> Path:
 
 
 def slugify(name: str) -> str:
-    """'Sala de estar' -> 'sala-de-estar'; falls back to 'ac'."""
+    """'Café lounge' -> 'cafe-lounge'; falls back to 'ac'."""
     ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-")
     return slug or "ac"

@@ -6,7 +6,7 @@ import pytest
 from conftest import MAC
 from fake_dongle import FakeDongle
 
-from aircon import setup
+from aircon import menu, setup
 from aircon.cli import main
 from aircon.config import load_config
 from aircon.daemon import Daemon
@@ -74,23 +74,23 @@ async def test_validate_features_and_restore(dongle):
 
 def test_add_rename_remove_devices(tmp_path):
     path = tmp_path / "config.toml"
-    first, created = setup.add_device(path, name="Sala de estar", host="10.0.0.2",
+    first, created = setup.add_device(path, name="Dining room", host="10.0.0.2",
                                       mac="04:fa:83:00:00:02")
-    assert created and first.id == "sala-de-estar"
-    second, _ = setup.add_device(path, name="Sala de estar", host="10.0.0.3", mac="04FA83000003")
-    assert second.id == "sala-de-estar-2"
-    same, created = setup.add_device(path, name="Sala", host="10.0.0.9", mac="04FA83000002")
-    assert not created and same.id == "sala-de-estar" and same.host == "10.0.0.9"
-    assert [d.id for d in load_config(path).devices] == ["sala-de-estar", "sala-de-estar-2"]
+    assert created and first.id == "dining-room"
+    second, _ = setup.add_device(path, name="Dining room", host="10.0.0.3", mac="04FA83000003")
+    assert second.id == "dining-room-2"
+    same, created = setup.add_device(path, name="Dining", host="10.0.0.9", mac="04FA83000002")
+    assert not created and same.id == "dining-room" and same.host == "10.0.0.9"
+    assert [d.id for d in load_config(path).devices] == ["dining-room", "dining-room-2"]
 
-    setup.rename_device(path, "sala-de-estar-2", "Quarto")
-    assert load_config(path).get("sala-de-estar-2").name == "Quarto"
+    setup.rename_device(path, "dining-room-2", "Bedroom")
+    assert load_config(path).get("dining-room-2").name == "Bedroom"
     config = load_config(path)
-    config.default = "sala-de-estar"
+    config.default = "dining-room"
     setup.save_config(path, config)
-    remaining = setup.remove_device(path, "sala-de-estar")
-    assert [d.id for d in remaining.devices] == ["sala-de-estar-2"]
-    assert load_config(path).default_id == "sala-de-estar-2"
+    remaining = setup.remove_device(path, "dining-room")
+    assert [d.id for d in remaining.devices] == ["dining-room-2"]
+    assert load_config(path).default_id == "dining-room-2"
     with pytest.raises(LookupError):
         setup.remove_device(path, "nope")
 
@@ -98,7 +98,7 @@ def test_add_rename_remove_devices(tmp_path):
 def test_add_device_keeps_validation(tmp_path):
     path = tmp_path / "config.toml"
     validation = setup.ValidationResult(swing_style="byte", features=["sleep"])
-    device, _ = setup.add_device(path, name="Quarto", host="10.0.0.4", mac="04FA83000004",
+    device, _ = setup.add_device(path, name="Bedroom", host="10.0.0.4", mac="04FA83000004",
                                  validation=validation)
     loaded = load_config(path).get(device.id)
     assert (loaded.swing_style, loaded.features) == ("byte", ["sleep"])
@@ -185,15 +185,16 @@ async def test_setup_adds_second_device_and_syncs_menu(dongle, tmp_path, capsys)
     import os
     path = tmp_path / "config.toml"
     setup.add_device(path, name="Living room", host="10.0.0.2", mac="04FA83000002")
+    menu.sync(menu.default_menu_path(), None)  # the user opted in to the menu entries
     code = await asyncio.to_thread(main, [
         "setup", "apply", "--host", "127.0.0.1", "--port", str(dongle.port), "--mac", MAC,
-        "--name", "Quarto", "--no-restart", "--config", str(path), "--json",
+        "--name", "Bedroom", "--no-restart", "--config", str(path), "--json",
     ])
     assert code == 0
-    assert json.loads(capsys.readouterr().out)["id"] == "quarto"
-    assert [d.id for d in load_config(path).devices] == ["living-room", "quarto"]
+    assert json.loads(capsys.readouterr().out)["id"] == "bedroom"
+    assert [d.id for d in load_config(path).devices] == ["living-room", "bedroom"]
     menu_text = open(os.environ["AIRCON_MENU_FILE"]).read()
-    assert '"aircon.quarto.toggle"' in menu_text
+    assert '"aircon.bedroom.toggle"' in menu_text
 
 
 def test_wizard_skips_configured_units(monkeypatch, capsys, tmp_path):
@@ -212,15 +213,28 @@ def test_cli_devices_rename_remove(tmp_path, capsys):
     import os
     path = tmp_path / "config.toml"
     setup.add_device(path, name="Living room", host="10.0.0.2", mac="04FA83000002")
-    setup.add_device(path, name="Quarto", host="10.0.0.3", mac="04FA83000003")
+    setup.add_device(path, name="Bedroom", host="10.0.0.3", mac="04FA83000003")
     os.environ["AIRCON_CONFIG"] = str(path)
+    menu.sync(menu.default_menu_path(), None)  # the user opted in to the menu entries
     assert main(["devices", "--json"]) == 0
     rows = json.loads(capsys.readouterr().out)
-    assert [r["id"] for r in rows] == ["living-room", "quarto"] and rows[0]["default"]
-    assert main(["rename", "quarto", "Bedroom", "--no-restart"]) == 0
-    assert load_config(path).get("quarto").name == "Bedroom"
+    assert [r["id"] for r in rows] == ["living-room", "bedroom"] and rows[0]["default"]
+    assert main(["rename", "bedroom", "Guest room", "--no-restart"]) == 0
+    assert load_config(path).get("bedroom").name == "Guest room"
     assert main(["remove", "living-room", "--no-restart"]) == 0
-    assert [d.id for d in load_config(path).devices] == ["quarto"]
+    assert [d.id for d in load_config(path).devices] == ["bedroom"]
     assert main(["remove", "nope", "--no-restart"]) == 1
     menu_text = open(os.environ["AIRCON_MENU_FILE"]).read()
     assert '"aircon.toggle"' in menu_text  # back to a single, flat device menu
+
+
+def test_setup_and_rename_leave_the_menu_alone_without_entries(tmp_path, monkeypatch):
+    path = tmp_path / "config.toml"
+    setup.add_device(path, name="Living room", host="10.0.0.2", mac="04FA83000002")
+    monkeypatch.setenv("AIRCON_CONFIG", str(path))
+    menu_path = menu.default_menu_path()
+    assert main(["rename", "living-room", "Lounge", "--no-restart"]) == 0
+    assert not menu_path.exists()
+    menu_path.write_text("{\n}\n")
+    assert main(["rename", "living-room", "Den", "--no-restart"]) == 0
+    assert menu_path.read_text() == "{\n}\n"

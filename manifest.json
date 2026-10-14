@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "id": "aircon",
+  "id": "io.github.seromenho.aircon",
   "name": "Air Conditioner",
-  "version": "0.2.0",
-  "author": "aircon contributors",
+  "version": "0.3.0",
+  "author": "seromenho",
   "license": "MIT",
-  "description": "Local air conditioner control backed by the aircond daemon: bar indicator and a themed control panel.",
+  "description": "Control your air conditioners from the bar, locally, with no cloud. Haier SmartAir2 first; pluggable backends for other brands.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Air Conditioner",
-    "description": "Shows the air conditioner state and opens a control panel.",
+    "description": "Shows your air conditioners and opens a themed control panel.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",

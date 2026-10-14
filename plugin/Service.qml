@@ -14,7 +14,7 @@ Item {
   }
 
   // Keep in sync with manifest.json and src/aircon/__init__.py (a test checks this).
-  readonly property string pluginVersion: "0.2.0"
+  readonly property string pluginVersion: "0.3.0"
   readonly property string installScript:
     Qt.resolvedUrl("../install.sh").toString().replace(/^file:\/\//, "")
 
@@ -26,8 +26,8 @@ Item {
   onOutdatedChanged: {
     if (!outdated || _updateTried) return
     _updateTried = true
-    updateProcess.command = [installScript, "--update"]
-    updateProcess.running = true
+    // Detached: the update rescans plugins, which reloads this widget and would kill a child.
+    Quickshell.execDetached([installScript, "--update"])
   }
 
   property bool serviceUp: false
@@ -174,18 +174,6 @@ Item {
     command: ["sh", "-c",
               "test -x \"$HOME/.local/bin/aircon\" && systemctl --user is-enabled --quiet aircond.service"]
     onExited: function(exitCode) { root.installed = exitCode === 0 }
-  }
-
-  Process {
-    id: updateProcess
-    running: false
-    command: []
-    stderr: StdioCollector { id: updateStderr; waitForEnd: true }
-    onExited: function(exitCode) {
-      if (exitCode !== 0) {
-        root.commandError = "Update failed: " + String(updateStderr.text || "").trim().split("\n").pop()
-      }
-    }
   }
 
   // -- in-panel setup ---------------------------------------------------------------------
