@@ -144,21 +144,39 @@ class Candidate:
     state: State | None
     port: int = DEFAULT_PORT
     configured: bool = False
+    backend: str = DEFAULT_BACKEND
+    options: dict = field(default_factory=dict)
 
     @property
     def is_haier(self) -> bool:
-        return bool(self.mac) and compact_mac(self.mac).startswith(HAIER_OUIS)
+        return (self.backend == DEFAULT_BACKEND and bool(self.mac)
+                and compact_mac(self.mac).startswith(HAIER_OUIS))
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "host": self.host,
             "mac": compact_mac(self.mac) if self.mac else None,
             "port": self.port,
-            "backend": DEFAULT_BACKEND,
+            "backend": self.backend,
             "is_haier": self.is_haier,
             "configured": self.configured,
             "state": self.state.to_dict() if self.state else None,
         }
+        if self.options:
+            result["options"] = self.options
+        return result
+
+
+async def discover_midea(hosts: Iterable[str] | None = None,
+                         configured_ids: Iterable[str] = ()) -> list[Candidate]:
+    """Discover metadata locally, without authentication, cloud access or state changes."""
+    from aircon.backends.midea_lan import protocol
+
+    known = set(configured_ids)
+    return [Candidate(host=item["host"], mac=None, state=None, port=item["port"],
+                      backend="midea_lan", options=item["options"],
+                      configured=item["options"]["device_id"] in known)
+            for item in await protocol.discover(hosts)]
 
 
 async def discover(
@@ -300,22 +318,39 @@ def save_config(path: Path, config: Config) -> Path | None:
     return write_config(path, dump_config(config, HEADER))
 
 
-def add_device(path: Path, *, name: str | None, host: str, mac: str, port: int = DEFAULT_PORT,
+def add_device(path: Path, *, name: str | None, host: str, mac: str = "", port: int = DEFAULT_PORT,
                backend: str = DEFAULT_BACKEND,
+               options: dict | None = None,
                validation: ValidationResult | None = None) -> tuple[DeviceConfig, bool]:
     """Add a device, or update the one with the same MAC. Returns (device, created).
 
     Without a name, an existing device keeps its name and a new one gets a default.
     """
-    if not MAC_PATTERN.match(compact_mac(mac)):
+    from aircon.backends import BACKENDS
+
+    if backend not in BACKENDS:
+        raise ValueError(f"unknown backend {backend!r}")
+    if backend == DEFAULT_BACKEND and not MAC_PATTERN.match(compact_mac(mac)):
         raise ValueError(f"invalid MAC address {mac!r} (12 hex digits)")
     config = load_or_empty(path)
-    existing = next((d for d in config.devices
-                     if d.mac and compact_mac(d.mac) == compact_mac(mac)), None)
+    existing = next((d for d in config.devices if d.backend == backend and (
+        (backend == DEFAULT_BACKEND and d.mac and compact_mac(d.mac) == compact_mac(mac))
+        or (backend == "midea_lan"
+            and str(d.options.get("device_id")) == str((options or {}).get("device_id")))
+    )), None)
+    if backend == "midea_lan":
+        from aircon.backends.midea_lan.protocol import settings
+
+        options = {**(existing.options if existing else {}), **(options or {})}
+        parsed = settings(DeviceConfig(name=name or DEFAULT_NAME, backend=backend,
+                                       host=host, port=port, options=options))
+        port = parsed.port
     if existing is not None:
         existing.host, existing.port = host, port
         if name:
             existing.name = name
+        if options is not None:
+            existing.options = dict(options)
         if validation is not None:
             existing.swing_style = validation.swing_style
             existing.features = list(validation.features)
@@ -327,6 +362,7 @@ def add_device(path: Path, *, name: str | None, host: str, mac: str, port: int =
         swing_style=validation.swing_style if validation else "bits",
         features=list(validation.features) if validation else [],
         id=unique_id(slugify(name), (d.id for d in config.devices)),
+        options=dict(options or {}),
     )
     config.devices.append(device)
     save_config(path, config)

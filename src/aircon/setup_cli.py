@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import tomllib
 from pathlib import Path
 
 from aircon import menu, setup
@@ -40,6 +41,8 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
                         help=f"device port (default: {setup.DEFAULT_PORT})")
     common.add_argument("--hosts", nargs="+", default=argparse.SUPPRESS,
                         help="only probe these IP addresses")
+    common.add_argument("--backend", choices=("haier_smartair2", "midea_lan"),
+                        default=argparse.SUPPRESS, help="device backend (default: haier_smartair2)")
     common.add_argument("--settle", type=float, default=argparse.SUPPRESS,
                         help=argparse.SUPPRESS)
 
@@ -56,7 +59,11 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     apply = setup_sub.add_parser("apply", parents=[common],
                                  help="add (or update) a known device")
     apply.add_argument("--host", required=True)
-    apply.add_argument("--mac", required=True)
+    apply.add_argument("--mac", help="Haier Wi-Fi module MAC (required for Haier)")
+    apply.add_argument("--device-id", help="Midea numeric device ID")
+    apply.add_argument("--protocol-version", type=int, choices=(2, 3))
+    apply.add_argument("--options-file", type=Path,
+                       help="Midea options in a private TOML file (device_id, token, key, etc.)")
     apply.add_argument("--name", default=None,
                        help=f"name to show (default: keep the current one, or {DEFAULT_NAME!r})")
     apply.add_argument("--validate", action="store_true",
@@ -70,6 +77,10 @@ def run(args: argparse.Namespace) -> int:
         return _discover(args)
     if command == "apply":
         return _apply(args)
+    if _opt(args, "backend", setup.DEFAULT_BACKEND) == "midea_lan":
+        print("For Midea, use aircon setup discover --backend midea_lan, then "
+              "aircon setup apply --backend midea_lan (see docs/reference.md).")
+        return 1
     return _wizard(args)
 
 
@@ -102,6 +113,11 @@ def apply_changes(args: argparse.Namespace) -> bool:
 
 
 def describe(candidate: setup.Candidate) -> str:
+    if candidate.backend == "midea_lan":
+        return (f"{candidate.host}:{candidate.port}  Midea · "
+                f"device ID {candidate.options['device_id']} · "
+                f"V{candidate.options['protocol_version']}"
+                + (" · already added" if candidate.configured else ""))
     vendor = "Haier" if candidate.is_haier else "unknown vendor"
     mac = setup.compact_mac(candidate.mac) if candidate.mac else "MAC unknown"
     state = candidate.state
@@ -160,6 +176,13 @@ def _report_saved(args: argparse.Namespace, result: dict) -> None:
 
 
 def _discover_candidates(args: argparse.Namespace) -> list[setup.Candidate]:
+    if _opt(args, "backend", setup.DEFAULT_BACKEND) == "midea_lan":
+        ids = [str(d.options.get("device_id"))
+               for d in setup.load_or_empty(config_path(args)).devices if d.backend == "midea_lan"]
+        try:
+            return asyncio.run(setup.discover_midea(_opt(args, "hosts", None), ids))
+        except RuntimeError as exc:
+            raise ValueError(str(exc)) from None
     return asyncio.run(setup.discover(
         hosts=_opt(args, "hosts", None), port=_port(args),
         configured_macs=setup.configured_macs(config_path(args)),
@@ -175,7 +198,8 @@ def _discover(args: argparse.Namespace) -> int:
         print(json.dumps([c.to_dict() for c in candidates]))
         return 0
     if not candidates:
-        print(NOT_FOUND_HELP)
+        print("No Midea AC found; check pairing and the local network. Try --hosts IP."
+              if _opt(args, "backend", setup.DEFAULT_BACKEND) == "midea_lan" else NOT_FOUND_HELP)
         return 1
     for candidate in candidates:
         print(describe(candidate))
@@ -183,6 +207,10 @@ def _discover(args: argparse.Namespace) -> int:
 
 
 def _apply(args: argparse.Namespace) -> int:
+    if _opt(args, "backend", setup.DEFAULT_BACKEND) == "midea_lan":
+        return _apply_midea(args)
+    if not args.mac:
+        raise ValueError("Haier setup requires --mac")
     port = _port(args)
     state = asyncio.run(setup.read_state(args.host, args.mac, port))
     if state is None:
@@ -199,6 +227,33 @@ def _apply(args: argparse.Namespace) -> int:
         print(json.dumps(result))
     else:
         _report_saved(args, result)
+    return 0
+
+
+def _apply_midea(args: argparse.Namespace) -> int:
+    if args.validate:
+        raise ValueError("Midea --validate is not supported; optional features stay disabled")
+    options = {}
+    if args.options_file:
+        with args.options_file.open("rb") as fh:
+            options = tomllib.load(fh)
+    if args.device_id is not None:
+        options["device_id"] = args.device_id
+    if args.protocol_version is not None:
+        options["protocol_version"] = args.protocol_version
+    device, created = setup.add_device(
+        config_path(args), name=args.name, host=args.host,
+        port=_opt(args, "port", 6444), backend="midea_lan", options=options,
+    )
+    result = {
+        "ok": True, "id": device.id, "name": device.name, "created": created,
+        "config": str(config_path(args)), "restarted": apply_changes(args), "restored": True,
+    }
+    if args.json:
+        print(json.dumps(result))
+    else:
+        _report_saved(args, result)
+        print("Settings saved; aircond will connect in the background. Run: aircon status")
     return 0
 
 

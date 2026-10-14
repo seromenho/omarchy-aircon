@@ -20,13 +20,16 @@ No cloud, no phone app, no hunting for the remote.
 
 - **Haier** units with the SmartAir2 USB Wi-Fi module (the one paired with the
   HaierSmartAir2 app).
+- **Midea** Wi-Fi ACs using NetHome Plus / Midea Air (V2/V3), with optional Midea
+  support. See [Midea setup](docs/reference.md#midea-lan-notes).
 
 Yours isn't listed? See [Add your air conditioner](#add-your-air-conditioner).
 
 ## Requirements
 
 - Omarchy 4.
-- `python3` 3.12 or newer. Nothing else: no Python packages, no root, nothing system-wide.
+- `python3` 3.12 or newer. Midea additionally uses the optional `msmart-ng` package;
+  `./install.sh --midea` installs it privately. No root or system-wide packages needed.
 - A supported air conditioner on your home network.
 
 It runs a small background service (`aircond`, a systemd user service) and adds the `aircon`

@@ -366,3 +366,41 @@ def test_install_replaces_symlinked_commands(sandbox):
 def test_bad_options(sandbox, args):
     _, env, _ = sandbox
     assert run(REPO / "install.sh", env, *args).returncode == 2
+
+
+def test_midea_install_uses_external_venv_and_survives_update(sandbox):
+    home, env, log = sandbox
+    stubs = Path(env["PATH"].split(":")[0])
+    uv = stubs / "uv"
+    uv.write_text(
+        '#!/bin/sh\necho "uv $*" >> "$STUB_LOG"\n'
+        'if [ "$1" = venv ]; then\n'
+        '  mkdir -p "$4/bin"\n'
+        '  cat > "$4/bin/python" <<\'EOF\'\n'
+        '#!/bin/sh\necho "midea-python $*" >> "$STUB_LOG"\n'
+        'exec /usr/bin/python3 "$@"\nEOF\n'
+        '  chmod +x "$4/bin/python"\n'
+        'fi\n'
+    )
+    uv.chmod(0o755)
+    result = run(REPO / "install.sh", env, "--midea")
+    assert result.returncode == 0, result.stderr
+    venv = home / ".local/share/aircon/midea-venv"
+    assert (venv / "bin/python").exists()
+    assert "uv pip install --python" in log.read_text()
+    assert "msmart-ng>=2025.12.0,<2027" in log.read_text()
+    plugin_dir = plugins(home) / PLUGIN_ID
+    assert not [p for p in plugin_dir.rglob("*") if p.is_symlink()]
+    for args in ([], ["--update"]):
+        result = run(plugin_dir / "install.sh", env, *args)
+        assert result.returncode == 0, result.stderr
+        help_run = subprocess.run([str(home / ".local/bin/aircon"), "--help"],
+                                  env=env, capture_output=True, text=True, check=False)
+        assert help_run.returncode == 0, help_run.stderr
+    assert "midea-python -m aircon.cli --help" in log.read_text()
+    assert log.read_text().count("uv pip install") == 1
+
+
+def test_cannot_install_midea_during_uninstall(sandbox):
+    _, env, _ = sandbox
+    assert run(REPO / "install.sh", env, "--uninstall", "--midea").returncode == 2

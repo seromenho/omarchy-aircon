@@ -12,6 +12,7 @@ Everything technical about omarchy-aircon. For a quick start, see the [README](.
 - [How it works](#how-it-works)
 - [Socket API](#socket-api)
 - [Haier SmartAir2 notes](#haier-smartair2-notes)
+- [Midea LAN notes](#midea-lan-notes)
 - [Development](#development)
 
 ## Components
@@ -24,7 +25,8 @@ Everything technical about omarchy-aircon. For a quick start, see the [README](.
 - Omarchy menu entries for quick actions.
 
 Requirements: Omarchy 4 (Quickshell shell) and the system `python3` (3.12 or newer). There are
-no Python dependencies beyond the standard library, and nothing is installed system-wide.
+Haier uses only the standard library; Midea uses optional `msmart-ng`. Nothing is installed
+system-wide.
 
 ## Install, update and uninstall
 
@@ -96,7 +98,7 @@ Setup itself happens in the bar panel (or with `aircon setup`, below).
 
 ## Setup from the command line
 
-The panel's setup and `aircon setup` do the same thing: scan the local network for devices
+For Haier, the panel's setup and `aircon setup` do the same thing: scan the local network for devices
 answering on TCP port 56800, show what was found (address, MAC, current state), ask for a
 name and, if you agree, test the optional features (left/right swing, health, sleep). That
 test changes the unit for about a minute and then restores it. The result is written to
@@ -261,6 +263,111 @@ To check another unit:
 uv run python tools/haier_probe.py --host <ip> --mac <mac> status
 uv run python tools/haier_probe.py --host <ip> --mac <mac> validate   # changes the AC, then restores it
 ```
+
+## Midea LAN notes
+
+The `midea_lan` backend uses the optional
+[msmart-ng library](https://github.com/mill1000/midea-msmart) to control residential Midea
+ACs (device type `0xAC`) over the LAN. NetHome Plus and Midea Air Wi-Fi modules using V2 or
+V3 are supported by the library. V1, commercial `0xCC` units and Tuya-based modules are not
+handled by this backend. This integration has been tested with offline fakes and the
+library API, **not on a real Midea unit**.
+
+Pair the unit with NetHome Plus first and reserve its address in your router. Install from
+the clone containing this backend:
+
+```bash
+./install.sh --midea
+aircon setup discover --backend midea_lan --json
+# Or discover a known address:
+aircon setup discover --backend midea_lan --hosts 192.168.1.50
+```
+
+`--midea` installs `msmart-ng` in `${XDG_DATA_HOME:-~/.local/share}/aircon/midea-venv/` using
+`uv`, or Python's `venv` and `pip` if `uv` is unavailable. Both installed commands use that
+environment when present. It lives outside the plugin folder, survives plugin updates and
+is kept during uninstall. Remove it manually for a clean uninstall. Other backends do not
+need this dependency. For development use `uv sync --extra midea` and
+`uv run --extra midea python -m aircon.cli ...`.
+
+Discovery returns the address, device ID and protocol version. It explicitly disables
+automatic connection: it sends only local discovery requests, never contacts the cloud,
+authenticates or changes settings. The panel's **+ Add** wizard continues to discover Haier
+units; add Midea units with the CLI or config file. Configured Midea units use the normal
+panel, timers, sleep curve and menu.
+
+V2 needs only the device ID:
+
+```bash
+aircon setup apply --backend midea_lan --host 192.168.1.50 \
+  --device-id 123456789 --protocol-version 2 --name "Living room"
+```
+
+V3 additionally needs a token and key. Obtain those once using the upstream `msmart-ng`
+discovery tool (`msmart-ng discover --help` for account/region options, then
+`msmart-ng discover`). The installer puts that executable in the environment's `bin/`
+directory. **That upstream command can contact Midea's cloud** to obtain credentials;
+aircon itself never does. Keep the output private and save the successful token/key for
+future use without internet access. If the module is paired again, new credentials may be
+needed.
+
+Put the values in a private TOML file outside the clone, for example
+`~/.config/aircon/midea-options.toml` (run `chmod 600` on it):
+
+```toml
+device_id = "123456789"
+protocol_version = 3
+token = "REPLACE_WITH_HEXADECIMAL_TOKEN"
+key = "REPLACE_WITH_64_HEXADECIMAL_CHARACTERS"
+```
+
+Then add the unit without putting secrets in command arguments:
+
+```bash
+aircon setup apply --backend midea_lan --host 192.168.1.50 \
+  --options-file ~/.config/aircon/midea-options.toml --name "Living room"
+aircon status
+```
+
+`setup apply` validates and saves these settings without probing the unit; the restarted
+daemon connects in the background. Use `--no-restart` to save without connecting. The config
+and its backups are written with owner-only permissions. Setup output and daemon snapshots
+never include tokens or keys. Re-adding the same device ID updates it and preserves existing
+credentials when they are omitted.
+
+Alternatively, add a block to `~/.config/aircon/config.toml`:
+
+```toml
+[[device]]
+id = "midea-living-room"
+name = "Living room"
+backend = "midea_lan"
+host = "192.168.1.50"
+port = 6444
+features = []
+options = { device_id = "123456789", protocol_version = 3, token = "REPLACE_WITH_HEX_TOKEN", key = "REPLACE_WITH_HEX_KEY" }
+```
+
+For V2 set `protocol_version = 2` and omit token/key. With no version, a supplied token/key
+selects V3; otherwise V2 is used. An omitted port uses Midea's default `6444`. Restart
+`aircond` after manual edits and run `aircon menu sync` if you use menu entries.
+
+Power, available modes, low/mid/high/auto fan speeds, vertical swing, target and indoor
+temperatures map to the generic model. The library queries device capabilities; older
+modules that omit capabilities use the library's defaults, so controls still need hardware
+verification. Custom fan percentages are shown as the nearest generic band. Target commands
+use whole degrees; half-degree temperatures reported by the unit are preserved when other
+settings change. Extra settings such as eco mode and Fahrenheit display are retained.
+Nonzero device error codes are shown as alarms. Humidity is not exposed.
+
+Horizontal swing, device sleep and purifier/health are disabled by default. After confirming
+them on the unit, add `"swing_horizontal"`, `"sleep"` or `"health"` to `features` respectively;
+horizontal swing and purifier must also be supported by the library's capability report.
+`--validate` is currently Haier-only. No automatic feature tests change a Midea unit.
+
+Requests are serialized, polled and retried/reconnected by the library and backend. Missing
+replies are treated as failures rather than successful changes. A missing optional package
+or unreachable unit leaves that device offline while the daemon continues serving others.
 
 ## Development
 
