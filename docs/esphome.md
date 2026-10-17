@@ -45,28 +45,68 @@ cable.
   `uv tool install esphome`) and access to serial ports (on Arch: `sudo usermod -aG uucp
   $USER`, then log in again).
 
-## Steps
+## 1. Prepare the firmware (once)
 
-1. Put `haier-smartair2.yaml` in a folder with a `secrets.yaml`:
+Make a folder, copy [`esphome/haier-smartair2.yaml`](esphome/haier-smartair2.yaml) into it
+and add a `secrets.yaml` next to it. Keep this file private and keep a copy: without the OTA
+password you can only update a board over USB.
 
-   ```yaml
-   wifi_ssid: "your 2.4 GHz network"
-   wifi_password: "..."
-   ap_password: "a password for the fallback hotspot"
-   ota_password: "a password for over-the-air updates"
-   ```
+```yaml
+wifi_ssid: "your network"         # 2.4 GHz: the ESP32-C3 cannot see 5 GHz-only networks
+wifi_password: "..."
+ap_password: "..."                # fallback hotspot, used only if the Wi-Fi fails
+ota_password: "..."               # protects over-the-air updates
+```
 
-   Change `name` and `friendly_name` at the top of the YAML (one copy per air conditioner).
-2. Plug the board into the computer and flash it: `esphome run haier-smartair2.yaml`. Note
-   the IP address it reports, and reserve it in your router.
-3. With the air conditioner switched off at the breaker, plug the cable into its USB
-   socket and into the board. Switch it back on. The board's **red** LED shows it has
-   power.
-4. Open `http://<board IP>` in a browser: the *Air conditioner* card should show the room
-   temperature within a minute. If it never does, swap `tx_pin` and `rx_pin` in the YAML
-   and update the board over Wi-Fi with `esphome run`.
-5. Add it to aircon: the panel's **+ Add** finds ESPHome boards on the network, or run
-   `aircon setup`, or `aircon setup apply --backend esphome --host <board IP> --mac <board MAC>`.
+Make one copy of the YAML per air conditioner (for example `ac-bedroom.yaml`,
+`ac-office.yaml`) and change `name` and `friendly_name` at the top of each. Check it with
+`esphome config ac-bedroom.yaml`.
+
+## 2. Flash each board (at the desk)
+
+1. Plug the board into the computer with the USB-C cable. It shows up as `/dev/ttyACM0`.
+   If it doesn't, or flashing fails with "Failed to connect", unplug it, hold the **BOOT**
+   button, plug it in, release the button and try again. A charge-only cable never works.
+2. Run `esphome run ac-bedroom.yaml` and pick the serial port. The first build takes a few
+   minutes.
+3. When it finishes, the log shows `WiFi Connected` and an `IP Address`. Write it down,
+   reserve that address for the board in your router, then stop the log with Ctrl+C.
+   Messages such as `Answer timeout` are normal here: the board isn't connected to an air
+   conditioner yet.
+4. Label the board (a piece of tape with its name) and repeat for the next one.
+
+After this firmware the board no longer appears as `/dev/ttyACM0`, because its USB pins now
+belong to the air conditioner. That's expected.
+
+## 3. Install it in the air conditioner
+
+1. Optional but recommended for a first unit: with the air conditioner powered and nothing
+   plugged in, measure D+ and D− of its USB socket against GND (a USB-A breakout with
+   screw terminals makes this easy). About 3.3 V is fine; about 5 V needs a level shifter.
+2. Switch the air conditioner off at the breaker, not just with the remote.
+3. Plug the USB-A end of the cable into the air conditioner's Wi-Fi socket (it only goes
+   in one way) and the USB-C end into the board.
+4. Switch the breaker back on. The board's **red** LED means it has power.
+5. Fix the board and the cable with double-sided tape or a cable tie so nothing hangs.
+6. Within a minute, `http://<board IP>` shows the *Air conditioner* card with the room
+   temperature. Change the target temperature there and check that the unit follows. If
+   the card never gets a temperature, swap `tx_pin` and `rx_pin` in the YAML and update the
+   board over Wi-Fi (step 5).
+
+## 4. Add it to aircon
+
+The panel's **+ Add** finds ESPHome boards on the network next to Haier modules. From a
+terminal, `aircon setup` does the same, or add it directly:
+
+```bash
+aircon setup apply --backend esphome --host <board IP> --mac <board MAC> --name Bedroom
+```
+
+## 5. Update a board later
+
+Edit its YAML and run `esphome run ac-bedroom.yaml` again; choose the board's IP address
+(over the air) instead of a serial port. It updates and restarts in under a minute, without
+opening the air conditioner.
 
 ## Troubleshooting
 
