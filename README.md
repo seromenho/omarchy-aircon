@@ -21,8 +21,11 @@ No cloud, no phone app, no hunting for the remote.
 - **Haier** units with the SmartAir2 USB Wi-Fi module (the one paired with the
   HaierSmartAir2 app).
 - **Haier** units without that module: plug a few-euro ESP32 board into the same USB port
-  with a cable, no soldering. [How to build it](docs/esphome.md).
-- Any air conditioner run by an **ESPHome** board with its web server turned on.
+  with a cable, no soldering. [How to build it](docs/esphome.md#haier-units-without-a-wi-fi-module).
+- **Other brands through ESPHome**: any air conditioner that an [ESPHome](https://esphome.io/)
+  board can control (Midea, Mitsubishi, Daikin, Gree, infrared remotes, …), with the board's
+  web server turned on. How the board connects depends on the brand; only Haier has been
+  tested so far. [What you need](docs/esphome.md).
 
 Yours isn't listed? See [Add your air conditioner](#add-your-air-conditioner).
 
