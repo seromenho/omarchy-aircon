@@ -34,6 +34,13 @@ def test_capabilities_without_lists_keep_the_fallback():
     assert p.decode_capabilities({"id": "climate/x"}, FALLBACK) == FALLBACK
 
 
+def test_capabilities_ignore_values_that_are_not_names():
+    caps = p.decode_capabilities({"modes": [[1], {"a": 2}, "COOL"], "fan_modes": "AUTO"},
+                                 FALLBACK)
+    assert caps.modes == ["cool"]
+    assert caps.fan_speeds == FALLBACK.fan_speeds
+
+
 def test_power_off_and_power_on():
     on = State(power=True, mode="dry")
     assert p.encode_command(on, Command(power=False), RAW_MODES) == {"mode": "OFF"}

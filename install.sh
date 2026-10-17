@@ -105,7 +105,7 @@ fi
 # reloads the widget for each changed file, so many runs queue up on the lock. Once one has
 # restarted the service on the new version, the rest must not restart it again (systemd stops
 # a service restarted too often).
-if [[ $MODE == "update" && -x $BIN_DIR/aircon ]]; then
+if [[ $MODE == "update" && -x $BIN_DIR/aircon ]] && same "$SOURCE_DIR" "$PLUGIN_DIR"; then
   wanted=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' \
     "$SOURCE_DIR/manifest.json")
   running=$("$BIN_DIR/aircon" status --json 2>/dev/null \

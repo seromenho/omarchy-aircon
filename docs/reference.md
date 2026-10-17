@@ -276,8 +276,10 @@ minute, reads `GET /climate/<name>` and sends changes with `POST /climate/<name>
 (`mode`, `fan_mode`, `swing_mode`, `target_temperature`). Modes, fan speeds, swing positions
 and the temperature range come from the board. Health and sleep are not offered.
 
-ESPHome reports mode `OFF` while the unit is off, so aircon keeps the last mode and switches
-the unit on in that mode. As with the Haier module, fan-only mode with automatic speed is sent
+ESPHome reports mode `OFF` while the unit is off, so aircon keeps the last mode it saw and
+switches the unit on in that mode. If `aircond` starts while the unit is off it has not seen
+a mode yet and uses cool. A change the unit does not show within a few seconds is reported as
+an error. As with the Haier module, fan-only mode with automatic speed is sent
 as mid. The web server has no authentication: keep the board on a network you control.
 
 To build a board for a Haier unit without its Wi-Fi module (no soldering), see
