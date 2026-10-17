@@ -4,9 +4,10 @@ Instructions for a coding agent. Follow them when the user asks to support their
 conditioner, a new brand, a new protocol or a new backend (for example "add support for my
 Midea air conditioner"). Read [AGENTS.md](../AGENTS.md) first; its rules apply throughout.
 
-aircon talks to devices through **backends**. Haier units with the SmartAir2 Wi-Fi module are
-supported out of the box; anything else (Midea, Gree, Daikin, Tuya-based units, an ESPHome
-board, …) needs a new backend. Everything else — panel, timers, sleep curve, menu, CLI — works
+aircon talks to devices through **backends**. Haier units with the SmartAir2 Wi-Fi module and
+any ESPHome board with a climate entity (see [esphome.md](esphome.md)) are supported out of
+the box; anything else (Midea, Gree, Daikin, Tuya-based units, …) needs a new backend. If
+ESPHome already supports the unit, an ESPHome board may be the quickest route. Everything else — panel, timers, sleep curve, menu, CLI — works
 with any backend unchanged.
 
 ## 1. Ask before building

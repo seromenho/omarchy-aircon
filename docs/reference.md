@@ -96,10 +96,11 @@ Setup itself happens in the bar panel (or with `aircon setup`, below).
 
 ## Setup from the command line
 
-The panel's setup and `aircon setup` do the same thing: scan the local network for devices
-answering on TCP port 56800, show what was found (address, MAC, current state), ask for a
-name and, if you agree, test the optional features (left/right swing, health, sleep). That
-test changes the unit for about a minute and then restores it. The result is written to
+The panel's setup and `aircon setup` do the same thing: scan the local network for Haier
+modules (TCP port 56800) and ESPHome boards that expose a climate entity (HTTP port 80), show
+what was found (address, MAC, current state), ask for a name and, for Haier modules and if
+you agree, test the optional features (left/right swing, health, sleep). That test changes
+the unit for about a minute and then restores it. The result is written to
 `~/.config/aircon/config.toml` (keeping a backup) and `aircond` is restarted.
 
 Each run adds one air conditioner; adding a unit with an already known MAC updates it.
@@ -108,6 +109,7 @@ Each run adds one air conditioner; adding a unit with an already known MAC updat
 aircon setup                                    # interactive
 aircon setup discover [--json] [--hosts IP ...]
 aircon setup apply --host IP --mac MAC [--name NAME] [--validate] [--json] [--no-restart]
+aircon setup apply --backend esphome --host IP --mac MAC [--name NAME]
 ```
 
 ## Command line
@@ -169,6 +171,15 @@ host = "192.168.1.51"
 mac = "04FA83AABBCC"
 options = { }                   # backend-specific settings (keys, tokens, …)
 
+[[device]]
+id = "office"
+name = "Office"
+backend = "esphome"
+host = "192.168.1.52"           # the ESPHome board
+mac = "AABBCC112233"            # the board's MAC; setup uses it to recognise the device
+# port = 80                     # optional: the board's web_server port
+# options = { entity = "Air conditioner" }   # optional: which climate, if the board has several
+
 [filter]
 threshold_hours = 300
 ```
@@ -179,6 +190,7 @@ the menu entries). If the file has a mistake, the panel says so instead of showi
 Good to know:
 
 - Haier units need their `mac` (12 hex digits, printed on the Wi-Fi module).
+- `port` can be left out: each backend has its own default (Haier 56800, ESPHome 80).
 - Setup, rename and remove rewrite the file, so comments are not kept. The file is written
   with owner-only permissions (it may hold keys in `options`), and the last three versions
   are kept as `config.toml.bak.*`. If the file is a symlink (dotfiles), the link is kept and
@@ -255,7 +267,25 @@ Behaviour observed on a unit with module firmware 2.3.12:
 
 Community reports suggest newer module firmware (2.5.x) may not answer locally.
 
-To check another unit:
+## ESPHome notes
+
+The `esphome` backend controls any air conditioner whose ESPHome board has a `climate`
+entity and the `web_server` component (version 3). It follows the board's `/events` stream
+(Server-Sent Events) for live state and reconnects when the stream drops or goes quiet for a
+minute, reads `GET /climate/<name>` and sends changes with `POST /climate/<name>/set`
+(`mode`, `fan_mode`, `swing_mode`, `target_temperature`). Modes, fan speeds, swing positions
+and the temperature range come from the board. Health and sleep are not offered.
+
+ESPHome reports mode `OFF` while the unit is off, so aircon keeps the last mode and switches
+the unit on in that mode. As with the Haier module, fan-only mode with automatic speed is sent
+as mid. The web server has no authentication: keep the board on a network you control.
+
+To build a board for a Haier unit without its Wi-Fi module (no soldering), see
+[esphome.md](esphome.md).
+
+## Haier probe
+
+To check another Haier unit:
 
 ```bash
 uv run python tools/haier_probe.py --host <ip> --mac <mac> status

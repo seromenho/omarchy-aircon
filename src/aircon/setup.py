@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from aircon.backends.esphome import backend as esphome
 from aircon.backends.haier_smartair2.backend import HaierSmartAir2Backend
 from aircon.config import (
     MAC_PATTERN,
@@ -28,6 +29,8 @@ from aircon.model import Command, State
 
 DEFAULT_PORT = 56800
 DEFAULT_BACKEND = "haier_smartair2"
+ESPHOME_BACKEND = "esphome"
+ESPHOME_PORT = esphome.DEFAULT_PORT
 HAIER_OUIS = ("04FA83",)  # Qingdao Haier Technology
 MAX_HOSTS = 1024
 ALL_HAIER_FEATURES = ["health", "sleep", "swing_horizontal"]
@@ -137,6 +140,24 @@ async def read_state(host: str, mac: str, port: int = DEFAULT_PORT,
         await backend.close()
 
 
+async def read_esphome_state(host: str, port: int = ESPHOME_PORT,
+                             timeout: float = 3.0) -> State | None:
+    """The air conditioner behind an ESPHome board, or None if `host` is not one."""
+    device = DeviceConfig(name="setup", backend=ESPHOME_BACKEND, host=host, port=port)
+    backend = esphome.EsphomeBackend(device, timeout=timeout, quiet_timeout=timeout)
+    backend.quiet = True  # most web servers on the LAN are not ESPHome boards: no warnings
+    try:
+        await backend.start()
+        async with asyncio.timeout(timeout):
+            while not backend.connected:
+                await asyncio.sleep(0.05)
+        return backend.state
+    except (TimeoutError, ConnectionError, OSError):
+        return None
+    finally:
+        await backend.close()
+
+
 @dataclass
 class Candidate:
     host: str
@@ -144,17 +165,25 @@ class Candidate:
     state: State | None
     port: int = DEFAULT_PORT
     configured: bool = False
+    backend: str = DEFAULT_BACKEND
 
     @property
     def is_haier(self) -> bool:
         return bool(self.mac) and compact_mac(self.mac).startswith(HAIER_OUIS)
+
+    @property
+    def vendor(self) -> str:
+        if self.backend == ESPHOME_BACKEND:
+            return "ESPHome"
+        return "Haier" if self.is_haier else "Unknown"
 
     def to_dict(self) -> dict:
         return {
             "host": self.host,
             "mac": compact_mac(self.mac) if self.mac else None,
             "port": self.port,
-            "backend": DEFAULT_BACKEND,
+            "backend": self.backend,
+            "vendor": self.vendor,
             "is_haier": self.is_haier,
             "configured": self.configured,
             "state": self.state.to_dict() if self.state else None,
@@ -166,13 +195,50 @@ async def discover(
     port: int = DEFAULT_PORT,
     mac_lookup: Callable[[str], str | None] | None = None,
     configured_macs: Iterable[str] = (),
+    esphome_port: int | None = ESPHOME_PORT,
 ) -> list[Candidate]:
-    """Find devices answering on the SmartAir2 port and read their state."""
+    """Find Haier SmartAir2 modules and ESPHome air conditioners, and read their state.
+
+    `esphome_port=None` skips the ESPHome search.
+    """
     known = {compact_mac(m) for m in configured_macs if m}
     if hosts is None:
         hosts = [str(h) for net in default_subnets() for h in list(net.hosts())[:MAX_HOSTS]]
-    open_hosts = await scan(hosts, port)
+    hosts = list(hosts)
     lookup = mac_lookup or (lambda ip: read_arp().get(ip))
+    haier, boards = await asyncio.gather(
+        _discover_haier(hosts, port, lookup, known),
+        _discover_esphome(hosts, esphome_port, lookup, known),
+    )
+    candidates = haier + boards
+    order = {"Haier": 0, "ESPHome": 1}
+    candidates.sort(key=lambda c: (order.get(c.vendor, 2), c.state is None,
+                                   ipaddress.ip_address(c.host)))
+    return candidates
+
+
+async def _discover_esphome(hosts: list[str], port: int | None,
+                            lookup: Callable[[str], str | None],
+                            known: set[str]) -> list[Candidate]:
+    """ESPHome boards that expose an air conditioner; other web servers are left out."""
+    if port is None:
+        return []
+    open_hosts = await scan(hosts, port)
+    states = await asyncio.gather(*(read_esphome_state(host, port) for host in open_hosts))
+    candidates = []
+    for host, state in zip(open_hosts, states, strict=True):
+        if state is None:
+            continue
+        mac = lookup(host)
+        candidates.append(Candidate(host=host, mac=mac, state=state, port=port,
+                                    configured=bool(mac) and compact_mac(mac) in known,
+                                    backend=ESPHOME_BACKEND))
+    return candidates
+
+
+async def _discover_haier(hosts: list[str], port: int, lookup: Callable[[str], str | None],
+                          known: set[str]) -> list[Candidate]:
+    open_hosts = await scan(hosts, port)
     candidates = []
     macs = [lookup(host) for host in open_hosts]
 
@@ -185,8 +251,6 @@ async def discover(
         configured = bool(mac) and compact_mac(mac) in known
         candidates.append(Candidate(host=host, mac=mac, state=state, port=port,
                                     configured=configured))
-    candidates.sort(key=lambda c: (not c.is_haier, c.state is None,
-                                   ipaddress.ip_address(c.host)))
     return candidates
 
 
@@ -313,7 +377,7 @@ def add_device(path: Path, *, name: str | None, host: str, mac: str, port: int =
     existing = next((d for d in config.devices
                      if d.mac and compact_mac(d.mac) == compact_mac(mac)), None)
     if existing is not None:
-        existing.host, existing.port = host, port
+        existing.host, existing.port, existing.backend = host, port, backend
         if name:
             existing.name = name
         if validation is not None:

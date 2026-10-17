@@ -15,8 +15,15 @@ def _haier_smartair2(device: DeviceConfig) -> Backend:
     return HaierSmartAir2Backend(device)
 
 
+def _esphome(device: DeviceConfig) -> Backend:
+    from aircon.backends.esphome.backend import EsphomeBackend
+
+    return EsphomeBackend(device)
+
+
 BACKENDS = {
     "haier_smartair2": _haier_smartair2,
+    "esphome": _esphome,
 }
 
 
