@@ -101,6 +101,22 @@ if { [[ -e "$PLUGIN_DIR/.git" ]] || [[ ! -d $SOURCE_DIR ]]; } && ! same "$SOURCE
   exec bash "$PLUGIN_DIR/install.sh" "$@"
 fi
 
+# After `omarchy plugin update` every widget instance asks for `--update`, and the shell
+# reloads the widget for each changed file, so many runs queue up on the lock. Once one has
+# restarted the service on the new version, the rest must not restart it again (systemd stops
+# a service restarted too often).
+if [[ $MODE == "update" && -x $BIN_DIR/aircon ]]; then
+  wanted=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' \
+    "$SOURCE_DIR/manifest.json")
+  running=$("$BIN_DIR/aircon" status --json 2>/dev/null \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version", ""))' 2>/dev/null \
+    || true)
+  if [[ $running == "$wanted" ]]; then
+    echo "aircon $wanted is already running"
+    exit 0
+  fi
+fi
+
 # Earlier versions used the plugin ids "aircon" and "<user>.aircon". Only folders whose
 # manifest names this plugin are touched.
 LEGACY_IDS=(aircon)
@@ -168,6 +184,7 @@ mkdir -p "$UNIT_DIR"
 install -m 644 "$PLUGIN_DIR/systemd/aircond.service" "$UNIT_DIR/aircond.service"
 systemctl --user daemon-reload
 systemctl --user enable --quiet aircond.service
+systemctl --user reset-failed aircond.service 2>/dev/null || true  # clear a start-limit hit
 systemctl --user restart aircond.service
 
 step "Enabling the bar widget"

@@ -184,6 +184,29 @@ def test_install_update_and_uninstall(sandbox):
     assert "systemctl --user disable --now aircond.service" in log.read_text()
 
 
+def test_update_skips_when_the_new_version_already_runs(sandbox):
+    home, env, log = sandbox
+    plugin_dir = plugins(home) / PLUGIN_ID
+    assert run(REPO / "install.sh", env).returncode == 0
+    assert "systemctl --user reset-failed aircond.service" in log.read_text()
+
+    # Stand-in for a daemon that another --update run already restarted on this version.
+    fake_cli = home / ".local/bin/aircon"
+    fake_cli.write_text("#!/bin/sh\n"
+                        f"echo '{{\"version\": \"{aircon.__version__}\", \"devices\": []}}'\n")
+    log.write_text("")
+    result = run(plugin_dir / "install.sh", env, "--update")
+    assert result.returncode == 0, result.stderr
+    assert "already running" in result.stdout
+    assert "restart" not in log.read_text()
+
+    # A daemon on another version is restarted as before.
+    fake_cli.write_text("#!/bin/sh\necho '{\"version\": \"0.0.1\", \"devices\": []}'\n")
+    result = run(plugin_dir / "install.sh", env, "--update")
+    assert result.returncode == 0, result.stderr
+    assert "systemctl --user restart aircond.service" in log.read_text()
+
+
 def test_install_twice_keeps_the_plugin(sandbox):
     home, env, log = sandbox
     for _ in range(2):
