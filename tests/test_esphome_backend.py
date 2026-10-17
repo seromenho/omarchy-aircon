@@ -100,6 +100,32 @@ async def test_refused_change_raises(board):
     await backend.close()
 
 
+async def test_a_change_the_unit_never_shows_raises(board):
+    board.apply_delay = 30  # the board accepts it, the unit never reports it
+    backend = await make_backend(board.port)
+    await until(lambda: backend.connected)
+    with pytest.raises(TimeoutError, match="did not take"):
+        await backend.apply(Command(target_temp=19))
+    await backend.close()
+
+
+async def test_a_malformed_chunk_is_a_connection_error():
+    async def serve(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n-1\r\nxx\r\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    backend = EsphomeBackend(device(port), timeout=0.5)
+    backend._entity = "Air conditioner"
+    with pytest.raises(ConnectionError, match="unexpected answer"):
+        await backend.refresh()
+    server.close()
+    await server.wait_closed()
+
+
 async def test_reconnects_after_the_stream_drops(board):
     backend = await make_backend(board.port)
     await until(lambda: backend.connected)

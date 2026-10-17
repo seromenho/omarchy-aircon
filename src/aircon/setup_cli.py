@@ -39,7 +39,8 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     common.add_argument("--no-restart", action="store_true", default=argparse.SUPPRESS,
                         help="do not restart aircond afterwards")
     common.add_argument("--port", type=int, default=argparse.SUPPRESS,
-                        help=f"device port (default: {setup.DEFAULT_PORT})")
+                        help=f"device port (default: {setup.DEFAULT_PORT} for Haier, "
+                             f"{setup.ESPHOME_PORT} for ESPHome)")
     common.add_argument("--hosts", nargs="+", default=argparse.SUPPRESS,
                         help="only probe these IP addresses")
     common.add_argument("--settle", type=float, default=argparse.SUPPRESS,
@@ -137,11 +138,11 @@ def _ask(prompt: str, default: str = "") -> str:
 
 def _save(args: argparse.Namespace, name: str | None, host: str, mac: str,
           validation: setup.ValidationResult | None,
-          backend: str = setup.DEFAULT_BACKEND) -> dict:
+          backend: str = setup.DEFAULT_BACKEND, port: int | None = None) -> dict:
     path = config_path(args)
     device, created = setup.add_device(path, name=name, host=host, mac=mac,
-                                       port=_port(args, backend), backend=backend,
-                                       validation=validation)
+                                       port=_port(args, backend) if port is None else port,
+                                       backend=backend, validation=validation)
     restarted = apply_changes(args)
     return {
         "ok": True,
@@ -253,17 +254,19 @@ def _wizard(args: argparse.Namespace) -> int:
 
     name = _ask(f"Name [{DEFAULT_NAME}]: ", DEFAULT_NAME)
     validation = None
-    if choice.backend != setup.DEFAULT_BACKEND:
-        pass  # an ESPHome board already reports what the unit supports
-    elif _ask(FEATURE_WARNING, "n").lower() in ("y", "yes"):
-        print("Testing...", flush=True)
-        validation = asyncio.run(setup.validate_features(
-            choice.host, choice.mac or "", choice.port, _opt(args, "settle", 2.5),
-            _print_check))
-    else:
-        print("Skipped; only the basic controls will be offered. Re-run aircon setup to test.")
+    # Only Haier modules need the feature test; an ESPHome board reports what the unit supports.
+    if choice.backend == setup.DEFAULT_BACKEND:
+        if _ask(FEATURE_WARNING, "n").lower() in ("y", "yes"):
+            print("Testing...", flush=True)
+            validation = asyncio.run(setup.validate_features(
+                choice.host, choice.mac or "", choice.port, _opt(args, "settle", 2.5),
+                _print_check))
+        else:
+            print("Skipped; only the basic controls will be offered. "
+                  "Re-run aircon setup to test.")
 
-    result = _save(args, name, choice.host, choice.mac or "", validation, choice.backend)
+    result = _save(args, name, choice.host, choice.mac or "", validation, choice.backend,
+                   choice.port)
     _report_saved(args, result)
     print("Done. Open the panel from the bar, or run: aircon status")
     return 0

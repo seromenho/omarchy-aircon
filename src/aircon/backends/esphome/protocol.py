@@ -71,7 +71,9 @@ def _whole(value: object) -> int | None:
 
 
 def _ours(values: object, table: dict[str, str], order: tuple[str, ...]) -> list[str]:
-    known = {table[v] for v in values if v in table} if isinstance(values, list) else set()
+    if not isinstance(values, list):
+        return []
+    known = {table[v] for v in values if isinstance(v, str) and v in table}
     return [name for name in order if name in known]
 
 

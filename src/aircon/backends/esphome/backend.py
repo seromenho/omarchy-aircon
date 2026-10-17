@@ -119,9 +119,12 @@ class EsphomeBackend:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.settle
         while True:
-            await self.refresh()
-            if p.reached(self.state, params) or loop.time() >= deadline:
+            with contextlib.suppress(ConnectionError, TimeoutError):  # the change was accepted
+                await self.refresh()
+            if p.reached(self.state, params):
                 return self.state
+            if loop.time() >= deadline:
+                raise TimeoutError("the air conditioner did not take the change")
             await asyncio.sleep(0.25)
 
     # -- connection handling --------------------------------------------------------

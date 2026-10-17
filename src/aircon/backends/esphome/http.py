@@ -39,13 +39,19 @@ async def _chunks(reader: asyncio.StreamReader, headers: dict[str, str]) -> Asyn
     """The body as it arrives: chunked, sized, or until the board closes the connection."""
     if "chunked" in headers.get("transfer-encoding", "").lower():
         while True:
-            size_line = await reader.readline()
+            try:
+                size_line = await reader.readline()
+            except ValueError:  # a line longer than the stream limit
+                raise HttpError("bad chunk size") from None
             if not size_line:
                 raise ConnectionError("closed by the board")
+            digits = size_line.split(b";")[0].strip()
             try:
-                size = int(size_line.split(b";")[0].strip() or b"0", 16)
+                size = int(digits, 16)
             except ValueError:
                 raise HttpError("bad chunk size") from None
+            if size < 0 or not digits.isalnum():
+                raise HttpError("bad chunk size")
             if size == 0:
                 return
             if size > MAX_BODY:

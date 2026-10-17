@@ -224,7 +224,13 @@ async def _discover_esphome(hosts: list[str], port: int | None,
     if port is None:
         return []
     open_hosts = await scan(hosts, port)
-    states = await asyncio.gather(*(read_esphome_state(host, port) for host in open_hosts))
+    semaphore = asyncio.Semaphore(32)  # many web servers on a big LAN: cap the open sockets
+
+    async def probe(host: str) -> State | None:
+        async with semaphore:
+            return await read_esphome_state(host, port)
+
+    states = await asyncio.gather(*(probe(host) for host in open_hosts))
     candidates = []
     for host, state in zip(open_hosts, states, strict=True):
         if state is None:
