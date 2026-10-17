@@ -5,6 +5,7 @@ import socket
 import pytest
 from conftest import MAC
 from fake_dongle import FakeDongle
+from fake_esphome import FakeEsphome
 
 from aircon import menu, setup
 from aircon.cli import main
@@ -142,10 +143,67 @@ async def test_cli_discover_json(dongle, capsys):
     assert found[0]["configured"] is False
 
 
+@pytest.fixture
+async def board():
+    fake = await FakeEsphome().start()
+    yield fake
+    await fake.stop()
+
+
+ESP_MAC = "AABBCC112233"
+
+
+async def test_discover_finds_esphome_boards(board, dongle):
+    found = await setup.discover(hosts=["127.0.0.1"], port=dongle.port,
+                                 esphome_port=board.port, mac_lookup=lambda _: ESP_MAC)
+    assert [c.vendor for c in found] == ["ESPHome", "Unknown"]  # Haier first, unknown last
+    esp = found[0].to_dict()
+    assert (esp["backend"], esp["port"], esp["state"]["target_temp"]) == ("esphome",
+                                                                          board.port, 24)
+
+
+async def test_discover_ignores_web_servers_without_climate(dongle):
+    plain = await FakeEsphome(greet=False).start()
+    found = await setup.discover(hosts=["127.0.0.1"], port=dongle.port,
+                                 esphome_port=plain.port, mac_lookup=lambda _: MAC)
+    await plain.stop()
+    assert [c.backend for c in found] == ["haier_smartair2"]
+
+
+async def test_cli_apply_esphome(board, tmp_path, capsys):
+    code = await asyncio.to_thread(main, [
+        "setup", "apply", "--backend", "esphome", "--host", "127.0.0.1",
+        "--port", str(board.port), "--mac", ESP_MAC, "--name", "Bedroom",
+        "--no-restart", "--config", str(tmp_path / "c.toml"), "--json",
+    ])
+    assert code == 0
+    assert json.loads(capsys.readouterr().out)["created"] is True
+    device = load_config(tmp_path / "c.toml").device
+    assert (device.backend, device.port, device.mac) == ("esphome", board.port, ESP_MAC)
+
+
+async def test_cli_apply_esphome_refuses_feature_tests(board, tmp_path, capsys):
+    code = await asyncio.to_thread(main, [
+        "setup", "apply", "--backend", "esphome", "--host", "127.0.0.1",
+        "--port", str(board.port), "--mac", ESP_MAC, "--validate",
+        "--no-restart", "--config", str(tmp_path / "c.toml"), "--json",
+    ])
+    assert code == 2
+    assert not (tmp_path / "c.toml").exists()
+
+
+def test_port_zero_is_left_out_of_the_config(tmp_path):
+    path = tmp_path / "c.toml"
+    setup.add_device(path, name="Office", host="192.168.1.60", mac=ESP_MAC, port=0,
+                     backend="esphome")
+    assert "port" not in path.read_text()
+    assert load_config(path).device.port == 0
+
+
 def test_wizard_with_nothing_found(monkeypatch, capsys):
     monkeypatch.setattr(setup, "default_subnets", lambda: [])
     assert main(["setup", "--no-restart"]) == 1
-    assert "No air conditioner answered" in capsys.readouterr().out
+    assert "No air conditioner was found" in capsys.readouterr().out
 
 
 async def test_daemon_without_config(tmp_path):

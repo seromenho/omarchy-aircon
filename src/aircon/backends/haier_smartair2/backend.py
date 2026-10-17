@@ -134,7 +134,7 @@ class HaierSmartAir2Backend:
     async def _run(self) -> None:
         backoff = 1.0
         while not self._closing:
-            host, port = self.device.host, self.device.port
+            host, port = self.device.host, self.device.port or p.DEFAULT_PORT
             try:
                 reader, writer = await asyncio.wait_for(
                     asyncio.open_connection(host, port), self.timeout

@@ -26,6 +26,7 @@ src/aircon/
     base.py           the Backend protocol every brand implements
     __init__.py       BACKENDS registry: name -> factory
     haier_smartair2/  reference backend (protocol.py = pure codec, backend.py = asyncio client)
+    esphome/          any ESPHome climate board via its web_server (protocol.py, http.py, backend.py)
   daemon.py           aircond: one backend + scheduler per device, unix socket (JSON lines)
   scheduler.py        timers, sleep curve, filter hours (backend-independent)
   store.py            per-device persisted state
@@ -37,10 +38,11 @@ manifest.json         Omarchy plugin manifest (the repo itself is the plugin)
 preview.png           screenshot for the README and the Omarchy plugin marketplace
 plugin/               Omarchy shell (Quickshell/QML) bar widget, panel and in-panel setup
 install.sh            install / --update / --uninstall (wrappers, systemd unit, menu)
-tests/                pytest suite; tests/fake_dongle.py fakes the Haier module
+tests/                pytest suite; fake_dongle.py fakes the Haier module, fake_esphome.py a board
 tools/haier_probe.py  on-device validation for Haier units (changes the unit, then restores it)
 docs/reference.md     technical reference (CLI, config, socket API, internals)
 docs/adding-a-backend.md  how an agent adds support for a new air conditioner
+docs/esphome.md       building an ESPHome board for a Haier unit; docs/esphome/*.yaml firmware
 ```
 
 Data flow: plugin / menu / CLI → `aircon` → unix socket → `aircond` → `Backend` → device.

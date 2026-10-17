@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from aircon.model import State
 
+DEFAULT_PORT = 56800
 HEADER_LEN = 80
 REQ_MAGIC = b"\x00\x00\x27\x14"
 RESP_MAGIC = b"\x00\x00\x27\x15"

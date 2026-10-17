@@ -1,6 +1,6 @@
 [project]
 name = "aircon"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local, cloud-free air conditioner control for Omarchy"
 readme = "README.md"
 license = "MIT"

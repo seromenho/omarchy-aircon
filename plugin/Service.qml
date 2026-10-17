@@ -14,7 +14,7 @@ Item {
   }
 
   // Keep in sync with manifest.json and src/aircon/__init__.py (a test checks this).
-  readonly property string pluginVersion: "0.3.0"
+  readonly property string pluginVersion: "0.4.0"
   readonly property string installScript:
     Qt.resolvedUrl("../install.sh").toString().replace(/^file:\/\//, "")
 
@@ -196,7 +196,7 @@ Item {
     discoverProcess.running = true
   }
 
-  function addDevice(hostAddress, mac, name, validate) {
+  function addDevice(hostAddress, mac, name, validate, backend) {
     if (saveProcess.running) return
     saving = true
     setupError = ""
@@ -205,6 +205,7 @@ Item {
     // --opt=value keeps values that start with "-" from being read as options.
     var args = [root.cli, "setup", "apply", "--host=" + hostAddress, "--mac=" + mac,
                 "--name=" + name, "--json"]
+    if (backend) args.push("--backend=" + backend)
     if (validate) args.push("--validate")
     saveProcess.command = args
     saveProcess.running = true

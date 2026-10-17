@@ -65,7 +65,8 @@ class DeviceConfig:
     backend: str
     host: str
     mac: str = ""
-    port: int = 56800
+    # 0 means the backend's default port (Haier SmartAir2: 56800, ESPHome: 80).
+    port: int = 0
     # Haier only: how swing is encoded ("bits" or "byte"), see haier_smartair2/protocol.py.
     swing_style: str = "bits"
     # Optional capabilities confirmed on the device, e.g. "health", "sleep", "swing_horizontal".
@@ -202,7 +203,10 @@ def dump_config(config: Config, header: str = "") -> str:
             f"backend = {q(device.backend)}",
             f"host = {q(device.host)}",
             f"mac = {q(device.mac)}",
-            f"port = {int(device.port)}",
+        ]
+        if device.port:
+            lines.append(f"port = {int(device.port)}")
+        lines += [
             f"swing_style = {q(device.swing_style)}",
             f"features = [{features}]",
         ]

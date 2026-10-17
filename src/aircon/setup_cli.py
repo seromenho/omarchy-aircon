@@ -12,15 +12,17 @@ from aircon.config import default_config_path
 
 DEFAULT_NAME = setup.DEFAULT_NAME
 
-NOT_FOUND_HELP = """No air conditioner answered on TCP port 56800.
+NOT_FOUND_HELP = """No air conditioner was found on the local network.
 
 Check that:
-  - the unit's Wi-Fi module was paired once with the HaierSmartAir2 app (not hOn);
+  - a Haier Wi-Fi module was paired once with the HaierSmartAir2 app (not hOn), or an
+    ESPHome board runs a climate component with `web_server:` enabled;
   - the air conditioner and this computer are on the same network;
   - the unit is plugged in.
 
 If you know its address, run:
-  aircon setup apply --host <ip> --mac <MAC printed on the Wi-Fi module>"""
+  aircon setup apply --host <ip> --mac <MAC printed on the Wi-Fi module>
+  aircon setup apply --backend esphome --host <ip> --mac <board MAC>"""
 
 FEATURE_WARNING = (
     "Test optional features (left/right swing, health, sleep)?\n"
@@ -42,6 +44,8 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
                         help="only probe these IP addresses")
     common.add_argument("--settle", type=float, default=argparse.SUPPRESS,
                         help=argparse.SUPPRESS)
+    common.add_argument("--esphome-port", type=int, default=argparse.SUPPRESS,
+                        help=argparse.SUPPRESS)
 
     parser = sub.add_parser(
         "setup", parents=[common], help="find an air conditioner and add it",
@@ -56,6 +60,9 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     apply = setup_sub.add_parser("apply", parents=[common],
                                  help="add (or update) a known device")
     apply.add_argument("--host", required=True)
+    apply.add_argument("--backend", choices=[setup.DEFAULT_BACKEND, setup.ESPHOME_BACKEND],
+                       default=setup.DEFAULT_BACKEND,
+                       help=f"how to talk to it (default: {setup.DEFAULT_BACKEND})")
     apply.add_argument("--mac", required=True)
     apply.add_argument("--name", default=None,
                        help=f"name to show (default: keep the current one, or {DEFAULT_NAME!r})")
@@ -80,8 +87,9 @@ def _opt(args: argparse.Namespace, name: str, default):
     return getattr(args, name, default)
 
 
-def _port(args: argparse.Namespace) -> int:
-    return _opt(args, "port", setup.DEFAULT_PORT)
+def _port(args: argparse.Namespace, backend: str = setup.DEFAULT_BACKEND) -> int:
+    default = setup.ESPHOME_PORT if backend == setup.ESPHOME_BACKEND else setup.DEFAULT_PORT
+    return _opt(args, "port", default)
 
 
 def config_path(args: argparse.Namespace) -> Path:
@@ -102,7 +110,7 @@ def apply_changes(args: argparse.Namespace) -> bool:
 
 
 def describe(candidate: setup.Candidate) -> str:
-    vendor = "Haier" if candidate.is_haier else "unknown vendor"
+    vendor = "unknown vendor" if candidate.vendor == "Unknown" else candidate.vendor
     mac = setup.compact_mac(candidate.mac) if candidate.mac else "MAC unknown"
     state = candidate.state
     if state is None:
@@ -128,9 +136,11 @@ def _ask(prompt: str, default: str = "") -> str:
 
 
 def _save(args: argparse.Namespace, name: str | None, host: str, mac: str,
-          validation: setup.ValidationResult | None) -> dict:
+          validation: setup.ValidationResult | None,
+          backend: str = setup.DEFAULT_BACKEND) -> dict:
     path = config_path(args)
-    device, created = setup.add_device(path, name=name, host=host, mac=mac, port=_port(args),
+    device, created = setup.add_device(path, name=name, host=host, mac=mac,
+                                       port=_port(args, backend), backend=backend,
                                        validation=validation)
     restarted = apply_changes(args)
     return {
@@ -163,6 +173,7 @@ def _discover_candidates(args: argparse.Namespace) -> list[setup.Candidate]:
     return asyncio.run(setup.discover(
         hosts=_opt(args, "hosts", None), port=_port(args),
         configured_macs=setup.configured_macs(config_path(args)),
+        esphome_port=_opt(args, "esphome_port", setup.ESPHOME_PORT),
     ))
 
 
@@ -183,18 +194,28 @@ def _discover(args: argparse.Namespace) -> int:
 
 
 def _apply(args: argparse.Namespace) -> int:
-    port = _port(args)
-    state = asyncio.run(setup.read_state(args.host, args.mac, port))
-    if state is None:
+    backend = args.backend
+    port = _port(args, backend)
+    if backend == setup.ESPHOME_BACKEND:
+        state = asyncio.run(setup.read_esphome_state(args.host, port))
+        error = (f"no ESPHome air conditioner at {args.host}:{port}; check the address and "
+                 "that the board has `web_server:` enabled")
+    else:
+        state = asyncio.run(setup.read_state(args.host, args.mac, port))
         error = f"no answer from {args.host}:{port}; check the address and the MAC"
+    if state is None:
         print(json.dumps({"ok": False, "error": error}) if args.json else f"aircon: {error}")
         return 1
     validation = None
+    if args.validate and backend != setup.DEFAULT_BACKEND:
+        error = "--validate only applies to Haier SmartAir2 modules"
+        print(json.dumps({"ok": False, "error": error}) if args.json else f"aircon: {error}")
+        return 2
     if args.validate:
         report = (lambda label, ok: None) if args.json else _print_check
         validation = asyncio.run(setup.validate_features(
             args.host, args.mac, port, _opt(args, "settle", 2.5), report))
-    result = _save(args, args.name, args.host, args.mac, validation)
+    result = _save(args, args.name, args.host, args.mac, validation, backend)
     if args.json:
         print(json.dumps(result))
     else:
@@ -232,7 +253,9 @@ def _wizard(args: argparse.Namespace) -> int:
 
     name = _ask(f"Name [{DEFAULT_NAME}]: ", DEFAULT_NAME)
     validation = None
-    if _ask(FEATURE_WARNING, "n").lower() in ("y", "yes"):
+    if choice.backend != setup.DEFAULT_BACKEND:
+        pass  # an ESPHome board already reports what the unit supports
+    elif _ask(FEATURE_WARNING, "n").lower() in ("y", "yes"):
         print("Testing...", flush=True)
         validation = asyncio.run(setup.validate_features(
             choice.host, choice.mac or "", choice.port, _opt(args, "settle", 2.5),
@@ -240,7 +263,7 @@ def _wizard(args: argparse.Namespace) -> int:
     else:
         print("Skipped; only the basic controls will be offered. Re-run aircon setup to test.")
 
-    result = _save(args, name, choice.host, choice.mac or "", validation)
+    result = _save(args, name, choice.host, choice.mac or "", validation, choice.backend)
     _report_saved(args, result)
     print("Done. Open the panel from the bar, or run: aircon status")
     return 0

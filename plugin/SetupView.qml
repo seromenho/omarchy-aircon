@@ -42,14 +42,16 @@ Column {
     var s = c.state
     var status = !s ? "no answer" : (s.power ? s.mode + " · " + s.target_temp + "°C" : "off")
     if (s && s.room_temp !== null && s.room_temp !== undefined) status += " · room " + s.room_temp + "°C"
-    return (c.is_haier ? "Haier" : "Unknown") + " · " + c.host + " · " + status
+    return (c.vendor || (c.is_haier ? "Haier" : "Unknown")) + " · " + c.host + " · " + status
   }
 
   function save() {
     if (!canSave) return
     var hostAddress = chosen ? chosen.host : hostField.text.trim()
     var mac = chosen ? chosen.mac : macField.text.trim()
-    ac.addDevice(hostAddress, mac, nameField.text.trim(), testFeatures)
+    var backend = chosen && chosen.backend ? chosen.backend : "haier_smartair2"
+    ac.addDevice(hostAddress, mac, nameField.text.trim(),
+                 testFeatures && backend === "haier_smartair2", backend)
   }
 
   onVisibleChanged: if (visible && ac && !ac.discovering && !ac.discovered) ac.discover()
@@ -186,6 +188,8 @@ Column {
     }
 
     Toggle {
+      // ESPHome boards report what the unit supports; the test is for Haier modules.
+      visible: view.chosen === null || view.chosen.backend !== "esphome"
       width: parent.width
       label: "Test optional features"
       description: "Checks left/right swing, health and sleep. Changes the unit for about a minute, then restores it."
